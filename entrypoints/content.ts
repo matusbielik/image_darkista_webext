@@ -1,6 +1,7 @@
 import { defineContentScript } from 'wxt/sandbox';
 import { browser } from 'wxt/browser';
 
+// Types and Interfaces
 interface Settings {
   enableInvert: boolean;
   enableHue: boolean;
@@ -10,758 +11,640 @@ interface Settings {
   enableCompact: boolean;
 }
 
-let settings: Settings = {
-  enableInvert: true,
-  enableHue: true,
-  enableAuto: true,
-  enableSimilar: true,
-  enableReset: true,
-  enableCompact: false
-};
+interface AutoAdjustResult {
+  invertValue: number;
+  skipEffects: boolean;
+}
 
-async function loadSettings(): Promise<void> {
-  try {
-    const result = await browser.storage.local.get('settings');
-    if (result.settings) {
-      settings = {
-        ...settings,
-        ...result.settings
+interface Message {
+  action: string;
+  [key: string]: any;
+}
+
+// Utility class for image analysis
+class ImageAnalyzer {
+  private static canvas: HTMLCanvasElement = document.createElement('canvas');
+  private static context: CanvasRenderingContext2D | null = ImageAnalyzer.canvas.getContext('2d');
+
+  static async analyzeBrightness(img: HTMLImageElement): Promise<number> {
+    return new Promise((resolve) => {
+      const calculate = () => {
+        if (!this.context) {
+          resolve(0.5);
+          return;
+        }
+
+        this.canvas.width = img.naturalWidth || img.width;
+        this.canvas.height = img.naturalHeight || img.height;
+        this.context.drawImage(img, 0, 0);
+
+        try {
+          const imageData = this.context.getImageData(0, 0, this.canvas.width, this.canvas.height);
+          const data = imageData.data;
+          let totalBrightness = 0;
+
+          for (let i = 0; i < data.length; i += 16) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+          }
+
+          resolve(totalBrightness / (data.length / 16));
+        } catch (e) {
+          resolve(0.5);
+        }
       };
+
+      img.complete ? calculate() : img.onload = calculate;
+    });
+  }
+
+  static getBackgroundColor(element: Element | null): string {
+    while (element) {
+      const bgColor = window.getComputedStyle(element).backgroundColor;
+      if (bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+        return bgColor;
+      }
+      element = element.parentElement;
     }
-  } catch (error) {
-    console.error('Error loading settings:', error);
+    return window.getComputedStyle(document.body).backgroundColor;
   }
 }
 
-// Add these interfaces near the top of the file, after the Settings interface
-interface ApplyToAllMessage {
-  action: 'applyToAll'
-  invertValue: string
-  hueValue: string
+// UI Component base class
+abstract class UIComponent {
+  protected settings: Settings;
+  protected img: HTMLImageElement;
+
+  constructor(img: HTMLImageElement, settings: Settings) {
+    this.img = img;
+    this.settings = settings;
+  }
+
+  protected createBaseButton(text: string, title: string): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.textContent = this.settings.enableCompact ? text.split(' ')[0] : text;
+    button.title = title;
+    button.style.fontSize = '10px';
+    button.style.padding = this.settings.enableCompact ? '2px' : '2px 4px';
+    button.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+    button.style.border = 'none';
+    button.style.borderRadius = '4px';
+    button.style.color = 'white';
+    button.style.cursor = 'pointer';
+    button.style.transition = 'background-color 0.2s';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+
+    if (this.settings.enableCompact) {
+      button.style.width = '24px';
+      button.style.height = '24px';
+      button.style.minWidth = '24px';
+    }
+
+    this.addButtonHoverEffects(button);
+    return button;
+  }
+
+  private addButtonHoverEffects(button: HTMLButtonElement): void {
+    button.addEventListener('mouseenter', () => {
+      button.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
+    });
+    button.addEventListener('mouseleave', () => {
+      button.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+    });
+  }
+
+  abstract render(): HTMLElement | null;
 }
 
-interface ResetAllMessage {
-  action: 'resetAll'
-}
+// Slider Components
+class SliderComponent extends UIComponent {
+  private readonly type: 'invert' | 'hue';
+  private readonly config: {
+    label: string;
+    min: string;
+    max: string;
+    step: string;
+    defaultValue: string;
+  };
 
-interface UpdateSettingsMessage {
-  action: 'updateSettings'
-  settings: Settings
-}
-
-// Union type for all possible message types
-type Message = ApplyToAllMessage | ResetAllMessage | UpdateSettingsMessage
-
-export default defineContentScript({
-  matches: ['<all_urls>'],
-  async main() {
-    // Load settings first
-    await loadSettings()
-
-    // Function to create and add controls to an image
-    const addControlsToImage = (img: HTMLImageElement) => {
-
-      // Skip if controls are already added
-      if (img.hasAttribute('has-dark-controls')) return;
-      img.setAttribute('has-dark-controls', 'true');
-
-      // Create control container with positioning relative to the image itself
-      const controlContainer = document.createElement('div');
-      controlContainer.className = 'dark-image-controls';
-      controlContainer.style.position = 'absolute';
-      controlContainer.style.top = '0';
-      controlContainer.style.right = '0';
-      controlContainer.style.zIndex = '9999';
-      controlContainer.style.display = 'none';
-      controlContainer.style.padding = settings.enableCompact ? '4px' : '8px';
-      controlContainer.style.borderRadius = '8px';
-      controlContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-      controlContainer.style.color = 'white';
-      controlContainer.style.flexDirection = 'column';
-      controlContainer.style.gap = '4px';
-      controlContainer.style.pointerEvents = 'auto'; // Ensure controls are clickable
-
-      // Create a wrapper div that will contain both the image and controls
-      const wrapper = document.createElement('div');
-      wrapper.classList.add('dark-controls-wrapper');
-      wrapper.style.position = 'relative';
-      wrapper.style.display = 'inline-block';
-      wrapper.style.width = 'auto';
-      wrapper.style.height = 'auto';
-      wrapper.style.verticalAlign = 'top';
-
-      // Preserve original image dimensions and behavior
-      const originalStyles = window.getComputedStyle(img);
-      img.style.display = originalStyles.display;
-      img.style.width = originalStyles.width;
-      img.style.height = originalStyles.height;
-      img.style.maxWidth = originalStyles.maxWidth;
-      img.style.maxHeight = originalStyles.maxHeight;
-
-      // Position the container relative to the image
-      const imgParent = img.parentElement;
-      if (imgParent) {
-        // Get the computed style of the image
-        const imgStyle = window.getComputedStyle(img);
-
-        // Preserve any existing margin on the image
-        wrapper.style.margin = imgStyle.margin;
-        img.style.margin = '0';
-
-        // Replace image with wrapper
-        imgParent.insertBefore(wrapper, img);
-        wrapper.appendChild(img);
-        wrapper.appendChild(controlContainer);
-
-        // Update show/hide controls on hover to work with wrapper
-        wrapper.addEventListener('mouseenter', () => {
-          const controls = wrapper.querySelector('.dark-image-controls');
-          if (controls) {
-            (controls as HTMLElement).style.display = 'flex';
-          }
-        });
-
-        wrapper.addEventListener('mouseleave', (e) => {
-          const controls = wrapper.querySelector('.dark-image-controls');
-          if (controls && !controls.contains(e.relatedTarget as Node)) {
-            (controls as HTMLElement).style.display = 'none';
-          }
-        });
-      }
-
-      // Create sliders container
-      const slidersContainer = document.createElement('div');
-      slidersContainer.style.display = 'flex';
-      slidersContainer.style.flexDirection = 'column';
-      slidersContainer.style.gap = settings.enableCompact ? '2px' : '4px';
-
-      // Create invert slider
-      const invertContainer = createInvertSlider(img);
-      if (invertContainer) {
-        slidersContainer.appendChild(invertContainer);
-      }
-
-      // Create hue slider
-      const hueContainer = createHueSlider(img);
-      if (hueContainer) {
-        slidersContainer.appendChild(hueContainer);
-      }
-
-      // Create button container
-      const buttonsContainer = document.createElement('div');
-      buttonsContainer.style.display = 'flex';
-      buttonsContainer.style.flexDirection = settings.enableCompact ? 'row' : 'column';
-      buttonsContainer.style.gap = settings.enableCompact ? '2px' : '4px';
-      buttonsContainer.style.marginTop = '4px';
-
-      // Create auto-invert button
-      const autoInvertButton = createAutoButton(img);
-      if (autoInvertButton) {
-        buttonsContainer.appendChild(autoInvertButton);
-      }
-
-      // Create apply to similar button
-      const applyToSimilarButton = createSimilarButton(img);
-      if (applyToSimilarButton) {
-        buttonsContainer.appendChild(applyToSimilarButton);
-      }
-
-      // Create reset button
-      const resetButton = createResetButton(img);
-      if (resetButton) {
-        buttonsContainer.appendChild(resetButton);
-      }
-
-      // Add buttons container to the sliders container
-      slidersContainer.appendChild(buttonsContainer);
-
-      // Finally add everything to the main container
-      controlContainer.appendChild(slidersContainer);
+  constructor(img: HTMLImageElement, settings: Settings, type: 'invert' | 'hue') {
+    super(img, settings);
+    this.type = type;
+    this.config = type === 'invert' ? {
+      label: '🔆',
+      min: '0',
+      max: '1',
+      step: '0.1',
+      defaultValue: '0'
+    } : {
+      label: '🎨',
+      min: '0',
+      max: '360',
+      step: '10',
+      defaultValue: '0'
     };
+  }
 
-    // Initially process all existing images
-    document.querySelectorAll('img').forEach(img => {
-      addControlsToImage(img as HTMLImageElement);
+  render(): HTMLElement | null {
+    const settingKey = `enable${this.type.charAt(0).toUpperCase() + this.type.slice(1)}` as keyof Settings;
+    if (!this.settings[settingKey]) {
+      return null;
+    }
+
+    const container = document.createElement('div');
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.gap = this.settings.enableCompact ? '2px' : '4px';
+
+    const label = document.createElement('label');
+    label.textContent = this.config.label;
+    label.style.fontSize = '12px';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = this.config.min;
+    slider.max = this.config.max;
+    slider.step = this.config.step;
+    slider.value = this.config.defaultValue;
+    slider.style.width = this.settings.enableCompact ? '40px' : '60px';
+
+    slider.addEventListener('input', this.handleInput.bind(this));
+
+    container.appendChild(label);
+    container.appendChild(slider);
+    return container;
+  }
+
+  private handleInput(e: Event): void {
+    e.stopPropagation();
+    e.preventDefault();
+    const wrapper = this.img.parentElement;
+    if (!wrapper) return;
+
+    const sliders = wrapper.querySelectorAll('input[type="range"]');
+    const invertValue = (sliders[0] as HTMLInputElement)?.value || '0';
+    const hueValue = (sliders[1] as HTMLInputElement)?.value || '0';
+    ImageAdjuster.applyImageFilter(this.img, invertValue, hueValue);
+  }
+}
+
+// Button Components
+class ActionButton extends UIComponent {
+  private readonly type: 'auto' | 'similar' | 'reset';
+  private readonly config: {
+    text: string;
+    title: string;
+    handler: () => Promise<void>;
+  };
+
+  constructor(img: HTMLImageElement, settings: Settings, type: 'auto' | 'similar' | 'reset') {
+    super(img, settings);
+    this.type = type;
+    this.config = this.getConfig();
+  }
+
+  private getConfig() {
+    switch (this.type) {
+      case 'auto':
+        return {
+          text: '🎯 Auto-match',
+          title: 'Auto-match',
+          handler: this.handleAutoClick.bind(this)
+        };
+      case 'similar':
+        return {
+          text: '✨ Apply to similar',
+          title: 'Apply to similar',
+          handler: this.handleSimilarClick.bind(this)
+        };
+      case 'reset':
+        return {
+          text: '↺ Reset',
+          title: 'Reset',
+          handler: this.handleResetClick.bind(this)
+        };
+    }
+  }
+
+  render(): HTMLButtonElement | null {
+    const settingKey = `enable${this.type.charAt(0).toUpperCase() + this.type.slice(1)}` as keyof Settings;
+    if (!this.settings[settingKey]) {
+      return null;
+    }
+
+    const button = this.createBaseButton(this.config.text, this.config.title);
+    button.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      await this.config.handler();
     });
 
-    // Create a MutationObserver to watch for new images
-    const observer = new MutationObserver((mutations) => {
+    return button;
+  }
+
+  private async handleAutoClick(): Promise<void> {
+    const result = await ImageAdjuster.calculateAutoAdjust(this.img);
+    const wrapper = this.img.parentElement;
+    if (!wrapper) return;
+
+    const sliders = wrapper.querySelectorAll('input[type="range"]');
+    const invertSlider = sliders[0] as HTMLInputElement;
+    const hueSlider = sliders[1] as HTMLInputElement;
+
+    if (result.skipEffects) {
+      if (invertSlider) invertSlider.value = '0';
+      if (hueSlider) hueSlider.value = '0';
+      this.img.style.filter = '';
+    } else {
+      if (invertSlider) invertSlider.value = result.invertValue.toString();
+      if (hueSlider) hueSlider.value = '180';
+      ImageAdjuster.applyImageFilter(this.img, result.invertValue.toString(), '180');
+    }
+  }
+
+  private async handleSimilarClick(): Promise<void> {
+    const wrapper = this.img.parentElement;
+    const sliders = wrapper?.querySelectorAll('input[type="range"]');
+    const invertValue = (sliders?.[0] as HTMLInputElement)?.value || '0';
+    const hueValue = (sliders?.[1] as HTMLInputElement)?.value || '0';
+
+    // Get all images
+    const images = document.querySelectorAll('img');
+
+    // First, analyze the source image to get its characteristics
+    const sourceResult = await ImageAdjuster.calculateAutoAdjust(this.img);
+    if (sourceResult.skipEffects) {
+      return; // If source image shouldn't be inverted, don't apply to others
+    }
+
+    // Apply to similar images
+    for (const targetImg of images) {
+      if (targetImg !== this.img && ImageAdjuster.isSimilarImage(this.img, targetImg as HTMLImageElement)) {
+        const targetResult = await ImageAdjuster.calculateAutoAdjust(targetImg as HTMLImageElement);
+
+        // Only apply if both images have similar characteristics
+        if (!targetResult.skipEffects &&
+          Math.abs(sourceResult.invertValue - targetResult.invertValue) < 0.3) {
+          ImageAdjuster.applyImageFilter(targetImg as HTMLImageElement, invertValue, hueValue);
+
+          // Also update controls if they exist for this image
+          const targetWrapper = targetImg.parentElement;
+          if (targetWrapper?.classList.contains('dark-controls-wrapper')) {
+            const targetSliders = targetWrapper.querySelectorAll('input[type="range"]');
+            if (targetSliders[0]) (targetSliders[0] as HTMLInputElement).value = invertValue;
+            if (targetSliders[1]) (targetSliders[1] as HTMLInputElement).value = hueValue;
+          }
+        }
+      }
+    }
+  }
+
+  private async handleResetClick(): Promise<void> {
+    const wrapper = this.img.parentElement;
+    const sliders = wrapper?.querySelectorAll('input[type="range"]');
+    if (sliders?.[0]) (sliders[0] as HTMLInputElement).value = '0';
+    if (sliders?.[1]) (sliders[1] as HTMLInputElement).value = '0';
+    ImageAdjuster.applyImageFilter(this.img, '0', '0');
+  }
+}
+
+// Main ImageAdjuster class
+class ImageAdjuster {
+  private settings: Settings;
+  private observer: MutationObserver;
+  private scrollTimeout: number | null = null;
+
+  constructor() {
+    this.settings = {
+      enableInvert: true,
+      enableHue: true,
+      enableAuto: true,
+      enableSimilar: true,
+      enableReset: true,
+      enableCompact: false
+    };
+    this.observer = this.createObserver();
+  }
+
+  async initialize(): Promise<void> {
+    await this.loadSettings();
+    this.processExistingImages();
+    this.setupObserver();
+    this.setupScrollHandler();
+    this.setupMessageListener();
+  }
+
+  private async loadSettings(): Promise<void> {
+    try {
+      const result = await browser.storage.local.get('settings');
+      if (result.settings) {
+        this.settings = { ...this.settings, ...result.settings };
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
+  }
+
+  private createObserver(): MutationObserver {
+    return new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (mutation.type === 'attributes') {
-          // If this is an image and its src attribute changed
           if (mutation.target instanceof HTMLImageElement &&
             mutation.attributeName === 'src') {
-            addControlsToImage(mutation.target);
+            this.addControlsToImage(mutation.target);
           }
         } else if (mutation.type === 'childList') {
-          // Check for added nodes
           mutation.addedNodes.forEach((node) => {
-            // Check if the added node is an image
             if (node instanceof HTMLImageElement) {
-              addControlsToImage(node);
+              this.addControlsToImage(node);
             }
-            // Also check for images within added nodes
             if (node instanceof Element) {
               node.querySelectorAll('img').forEach(img => {
-                addControlsToImage(img as HTMLImageElement);
+                this.addControlsToImage(img as HTMLImageElement);
               });
             }
           });
         }
       });
     });
+  }
 
-    // Start observing the document with the configured parameters
-    observer.observe(document.body, {
-      childList: true,      // Watch for changes in direct children
-      subtree: true,        // Watch for changes in all descendants
-      attributes: true,     // Watch for attribute changes
-      attributeFilter: ['src']  // Only watch for src attribute changes
+  private setupObserver(): void {
+    this.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src']
     });
+  }
 
-    // Also add a scroll event listener to recheck for images
-    // as they might be loaded during scroll
-    let scrollTimeout: number | null = null;
+  private setupScrollHandler(): void {
     window.addEventListener('scroll', () => {
-      if (scrollTimeout) {
-        window.clearTimeout(scrollTimeout);
+      if (this.scrollTimeout) {
+        window.clearTimeout(this.scrollTimeout);
       }
-      scrollTimeout = window.setTimeout(() => {
-        document.querySelectorAll('img').forEach(img => {
-          addControlsToImage(img as HTMLImageElement);
-        });
+      this.scrollTimeout = window.setTimeout(() => {
+        this.processExistingImages();
       }, 100);
     });
+  }
 
-    // Add this to your content.ts main function
-    browser.runtime.onMessage.addListener((
-      message: unknown,
-      _sender: any,
-      _sendResponse: (response?: any) => void
-    ): true => {
+  private setupMessageListener(): void {
+    browser.runtime.onMessage.addListener((message: unknown): true => {
       if (typeof message === 'object' && message !== null) {
-        const msg = message as any;
-
-        if (msg.action === 'updateSettings') {
-          settings = msg.settings;
-
-          // Find all wrappers using the class and update them
-          document.querySelectorAll('.dark-controls-wrapper').forEach(wrapper => {
-            const img = wrapper.querySelector('img');
-            if (img) {
-              // Get the original parent
-              const originalParent = wrapper.parentElement;
-              if (originalParent) {
-                // Remove the image from wrapper
-                wrapper.removeChild(img);
-                // Put the image back in its original location
-                originalParent.insertBefore(img, wrapper);
-                // Remove the wrapper
-                wrapper.remove();
-                // Remove the attribute
-                img.removeAttribute('has-dark-controls');
-                // Re-add controls
-                addControlsToImage(img as HTMLImageElement);
-              }
-            }
-          });
-        } else if (msg.action === 'applyToAll') {
-          const images = document.querySelectorAll('img')
-          images.forEach(img => {
-            img.style.filter = `invert(${msg.invertValue}) hue-rotate(${msg.hueValue}deg)`
-          })
-        } else if (msg.action === 'resetAll') {
-          const images = document.querySelectorAll('img')
-          images.forEach(img => {
-            img.style.filter = ''
-          })
-        }
+        const msg = message as Message;
+        this.handleMessage(msg);
       }
-
       return true;
-    })
+    });
+  }
 
-    // Extract control container creation to a separate function
-    function createControlContainer(img: HTMLImageElement) {
-      const controlContainer = document.createElement('div');
-      controlContainer.className = 'dark-image-controls';
-      controlContainer.style.position = 'absolute';
-      controlContainer.style.top = '0';
-      controlContainer.style.right = '0';
-      controlContainer.style.zIndex = '9999';
-      controlContainer.style.display = 'none';
-      controlContainer.style.padding = settings.enableCompact ? '4px' : '8px';
-      controlContainer.style.borderRadius = '8px';
-      controlContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-      controlContainer.style.color = 'white';
-      controlContainer.style.flexDirection = 'column';
-      controlContainer.style.gap = '4px';
-      controlContainer.style.pointerEvents = 'auto';
+  private handleMessage(msg: Message): void {
+    switch (msg.action) {
+      case 'updateSettings':
+        this.settings = msg.settings;
+        this.updateAllControls();
+        break;
+      case 'applyToAll':
+        this.applyToAllImages(msg.invertValue, msg.hueValue);
+        break;
+      case 'resetAll':
+        this.resetAllImages();
+        break;
+    }
+  }
 
-      const mainContainer = document.createElement('div');
-      mainContainer.style.display = 'flex';
-      mainContainer.style.flexDirection = 'column';
-      mainContainer.style.gap = settings.enableCompact ? '2px' : '4px';
+  private processExistingImages(): void {
+    document.querySelectorAll('img').forEach(img => {
+      this.addControlsToImage(img as HTMLImageElement);
+    });
+  }
 
-      // Create and add sliders container
-      const slidersContainer = document.createElement('div');
-      slidersContainer.style.display = 'flex';
-      slidersContainer.style.flexDirection = 'column';
-      slidersContainer.style.gap = settings.enableCompact ? '2px' : '4px';
+  private addControlsToImage(img: HTMLImageElement): void {
+    if (img.hasAttribute('has-dark-controls')) return;
+    img.setAttribute('has-dark-controls', 'true');
 
-      // Only add sliders, nothing else
-      if (settings.enableInvert) {
-        const invertContainer = createInvertSlider(img);
-        if (invertContainer) slidersContainer.appendChild(invertContainer);
-      }
+    const wrapper = this.createWrapper(img);
+    const controlContainer = this.createControlContainer(img);
 
-      if (settings.enableHue) {
-        const hueContainer = createHueSlider(img);
-        if (hueContainer) slidersContainer.appendChild(hueContainer);
-      }
+    this.setupImageWrapper(img, wrapper, controlContainer);
+  }
 
-      // Add sliders container if it has children
-      if (slidersContainer.children.length > 0) {
-        mainContainer.appendChild(slidersContainer);
-      }
+  private createWrapper(img: HTMLImageElement): HTMLDivElement {
+    const wrapper = document.createElement('div');
+    wrapper.classList.add('dark-controls-wrapper');
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'inline-block';
+    wrapper.style.width = 'auto';
+    wrapper.style.height = 'auto';
+    wrapper.style.verticalAlign = 'top';
+    return wrapper;
+  }
 
-      // Create and add buttons container
-      const buttonsContainer = document.createElement('div');
-      buttonsContainer.style.display = 'flex';
-      buttonsContainer.style.flexDirection = settings.enableCompact ? 'row' : 'column';
-      buttonsContainer.style.gap = settings.enableCompact ? '2px' : '4px';
-      buttonsContainer.style.marginTop = '4px';
+  private createControlContainer(img: HTMLImageElement): HTMLDivElement {
+    const container = document.createElement('div');
+    container.className = 'dark-image-controls';
+    container.style.position = 'absolute';
+    container.style.top = '0';
+    container.style.right = '0';
+    container.style.zIndex = '9999';
+    container.style.display = 'none';
+    container.style.padding = this.settings.enableCompact ? '4px' : '8px';
+    container.style.borderRadius = '8px';
+    container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    container.style.color = 'white';
+    container.style.flexDirection = 'column';
+    container.style.gap = '4px';
+    container.style.pointerEvents = 'auto';
 
-      // Add all buttons here
-      const buttons = [];
+    const mainContainer = document.createElement('div');
+    mainContainer.style.display = 'flex';
+    mainContainer.style.flexDirection = 'column';
+    mainContainer.style.gap = this.settings.enableCompact ? '2px' : '4px';
 
-      if (settings.enableAuto) {
-        const autoButton = createAutoButton(img);
-        if (autoButton) buttons.push(autoButton);
-      }
+    // Add sliders
+    const slidersContainer = document.createElement('div');
+    slidersContainer.style.display = 'flex';
+    slidersContainer.style.flexDirection = 'column';
+    slidersContainer.style.gap = this.settings.enableCompact ? '2px' : '4px';
 
-      if (settings.enableSimilar) {
-        const similarButton = createSimilarButton(img);
-        if (similarButton) buttons.push(similarButton);
-      }
+    const invertSlider = new SliderComponent(img, this.settings, 'invert').render();
+    const hueSlider = new SliderComponent(img, this.settings, 'hue').render();
 
-      if (settings.enableReset) {
-        const resetButton = createResetButton(img);
-        if (resetButton) buttons.push(resetButton);
-      }
+    if (invertSlider) slidersContainer.appendChild(invertSlider);
+    if (hueSlider) slidersContainer.appendChild(hueSlider);
 
-      // Add all buttons to the buttons container
-      buttons.forEach(button => buttonsContainer.appendChild(button));
-
-      // Add buttons container if it has children
-      if (buttons.length > 0) {
-        mainContainer.appendChild(buttonsContainer);
-      }
-
-      controlContainer.appendChild(mainContainer);
-      return controlContainer;
+    if (slidersContainer.children.length > 0) {
+      mainContainer.appendChild(slidersContainer);
     }
 
-    // Extract the creation of individual controls to separate functions
-    function createInvertSlider(img: HTMLImageElement): HTMLDivElement | null {
-      if (!settings.enableInvert) return null;
+    // Add buttons
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.style.display = 'flex';
+    buttonsContainer.style.flexDirection = this.settings.enableCompact ? 'row' : 'column';
+    buttonsContainer.style.gap = this.settings.enableCompact ? '2px' : '4px';
+    buttonsContainer.style.marginTop = '4px';
 
-      const invertContainer = document.createElement('div');
-      invertContainer.style.display = 'flex';
-      invertContainer.style.alignItems = 'center';
-      invertContainer.style.gap = settings.enableCompact ? '2px' : '4px';
+    ['auto', 'similar', 'reset'].forEach(type => {
+      const button = new ActionButton(img, this.settings, type as 'auto' | 'similar' | 'reset').render();
+      if (button) buttonsContainer.appendChild(button);
+    });
 
-      const invertLabel = document.createElement('label');
-      invertLabel.textContent = '🔆';
-      invertLabel.style.fontSize = '12px';
-
-      const invertSlider = document.createElement('input');
-      invertSlider.type = 'range';
-      invertSlider.min = '0';
-      invertSlider.max = '1';
-      invertSlider.step = '0.1';
-      invertSlider.value = '0';
-      invertSlider.style.width = settings.enableCompact ? '40px' : '60px';
-
-      invertSlider.addEventListener('input', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const hueSlider = img.parentElement?.querySelector('input[type="range"]:nth-of-type(2)') as HTMLInputElement;
-        const hueValue = hueSlider?.value || '180';
-        applyImageFilter(img, invertSlider.value, hueValue);
-      });
-
-      invertContainer.appendChild(invertLabel);
-      invertContainer.appendChild(invertSlider);
-      return invertContainer;
+    if (buttonsContainer.children.length > 0) {
+      mainContainer.appendChild(buttonsContainer);
     }
 
-    function createHueSlider(img: HTMLImageElement): HTMLDivElement | null {
-      if (!settings.enableHue) return null;
+    container.appendChild(mainContainer);
+    return container;
+  }
 
-      const hueContainer = document.createElement('div');
-      hueContainer.style.display = 'flex';
-      hueContainer.style.alignItems = 'center';
-      hueContainer.style.gap = settings.enableCompact ? '2px' : '4px';
+  private setupImageWrapper(img: HTMLImageElement, wrapper: HTMLDivElement, controlContainer: HTMLDivElement): void {
+    const originalStyles = window.getComputedStyle(img);
+    img.style.display = originalStyles.display;
+    img.style.width = originalStyles.width;
+    img.style.height = originalStyles.height;
+    img.style.maxWidth = originalStyles.maxWidth;
+    img.style.maxHeight = originalStyles.maxHeight;
 
-      const hueLabel = document.createElement('label');
-      hueLabel.textContent = '🎨';
-      hueLabel.style.fontSize = '12px';
+    const imgParent = img.parentElement;
+    if (imgParent) {
+      const imgStyle = window.getComputedStyle(img);
+      wrapper.style.margin = imgStyle.margin;
+      img.style.margin = '0';
 
-      const hueSlider = document.createElement('input');
-      hueSlider.type = 'range';
-      hueSlider.min = '0';
-      hueSlider.max = '360';
-      hueSlider.step = '10';
-      hueSlider.value = '0';
-      hueSlider.style.width = settings.enableCompact ? '40px' : '60px';
+      imgParent.insertBefore(wrapper, img);
+      wrapper.appendChild(img);
+      wrapper.appendChild(controlContainer);
 
-      hueSlider.addEventListener('input', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const invertSlider = img.parentElement?.querySelector('input[type="range"]:first-of-type') as HTMLInputElement;
-        const invertValue = invertSlider?.value || '0';
-        applyImageFilter(img, invertValue, hueSlider.value);
-      });
-
-      hueContainer.appendChild(hueLabel);
-      hueContainer.appendChild(hueSlider);
-      return hueContainer;
+      this.setupHoverEvents(wrapper);
     }
+  }
 
-    function createAutoButton(img: HTMLImageElement): HTMLButtonElement | null {
-      if (!settings.enableAuto) return null;
-
-      const autoInvertButton = document.createElement('button');
-      autoInvertButton.textContent = settings.enableCompact ? '🎯' : '🎯 Auto-match';
-      autoInvertButton.title = 'Auto-match';
-      autoInvertButton.style.fontSize = '10px';
-      autoInvertButton.style.padding = settings.enableCompact ? '2px' : '2px 4px';
-      autoInvertButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      autoInvertButton.style.border = 'none';
-      autoInvertButton.style.borderRadius = '4px';
-      autoInvertButton.style.color = 'white';
-      autoInvertButton.style.cursor = 'pointer';
-      autoInvertButton.style.transition = 'background-color 0.2s';
-      autoInvertButton.style.display = 'flex';
-      autoInvertButton.style.alignItems = 'center';
-      autoInvertButton.style.justifyContent = 'center';
-      if (settings.enableCompact) {
-        autoInvertButton.style.width = '24px';  // Fixed width in compact mode
-        autoInvertButton.style.height = '24px';  // Fixed height in compact mode
-        autoInvertButton.style.minWidth = '24px';  // Ensure minimum width
+  private setupHoverEvents(wrapper: HTMLDivElement): void {
+    wrapper.addEventListener('mouseenter', () => {
+      const controls = wrapper.querySelector('.dark-image-controls');
+      if (controls) {
+        (controls as HTMLElement).style.display = 'flex';
       }
+    });
 
-      autoInvertButton.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
+    wrapper.addEventListener('mouseleave', (e) => {
+      const controls = wrapper.querySelector('.dark-image-controls');
+      if (controls && !controls.contains(e.relatedTarget as Node)) {
+        (controls as HTMLElement).style.display = 'none';
+      }
+    });
+  }
 
-        const result = await calculateAutoAdjust(img);
-
-        // Update how we find the sliders
-        const wrapper = img.parentElement;
-        if (!wrapper) return;
-
-        const sliders = wrapper.querySelectorAll('input[type="range"]');
-
-        const invertSlider = sliders[0];
-        const hueSlider = sliders[1];
-
-        if (result.skipEffects) {
-          if (invertSlider) (invertSlider as HTMLInputElement).value = '0';
-          if (hueSlider) (hueSlider as HTMLInputElement).value = '0';
-          img.style.filter = '';
-        } else {
-          if (invertSlider) (invertSlider as HTMLInputElement).value = result.invertValue.toString();
-          if (hueSlider) (hueSlider as HTMLInputElement).value = '180';
-          applyImageFilter(img, result.invertValue.toString(), '180');
+  private updateAllControls(): void {
+    document.querySelectorAll('.dark-controls-wrapper').forEach(wrapper => {
+      const img = wrapper.querySelector('img');
+      if (img) {
+        const originalParent = wrapper.parentElement;
+        if (originalParent) {
+          wrapper.removeChild(img);
+          originalParent.insertBefore(img, wrapper);
+          wrapper.remove();
+          img.removeAttribute('has-dark-controls');
+          this.addControlsToImage(img as HTMLImageElement);
         }
-      });
-
-      autoInvertButton.addEventListener('mouseenter', () => {
-        autoInvertButton.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
-      });
-      autoInvertButton.addEventListener('mouseleave', () => {
-        autoInvertButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      });
-
-      return autoInvertButton;
-    }
-
-    // Helper function to determine if images are in similar contexts
-    function isSimilarImage(sourceImg: HTMLImageElement, targetImg: HTMLImageElement): boolean {
-      // Check if images are in the same context
-      const isInArticle = (img: HTMLImageElement): boolean => {
-        return !!img.closest('article') ||
-          !!img.closest('[role="article"]') ||
-          !!img.closest('.post') ||
-          !!img.closest('.article');
-      };
-
-      // Check if image is likely to be an icon
-      const isLikelyIcon = (img: HTMLImageElement): boolean => {
-        const size = Math.max(img.width, img.height);
-        return size <= 48 || // Small images are likely icons
-          img.closest('nav') !== null || // Images in navigation
-          img.closest('header') !== null || // Images in header
-          img.closest('footer') !== null || // Images in footer
-          img.closest('.social') !== null || // Social media links
-          img.src.toLowerCase().includes('icon') || // URL contains 'icon'
-          img.src.toLowerCase().includes('logo'); // URL contains 'logo'
-      };
-
-      // Compare contexts
-      const sourceInArticle = isInArticle(sourceImg);
-      const targetInArticle = isInArticle(targetImg);
-      const sourceIsIcon = isLikelyIcon(sourceImg);
-      const targetIsIcon = isLikelyIcon(targetImg);
-
-      // Images are similar if they're both in articles (or both not in articles)
-      // and neither is an icon
-      return sourceInArticle === targetInArticle && !sourceIsIcon && !targetIsIcon;
-    }
-
-    function createSimilarButton(img: HTMLImageElement): HTMLButtonElement | null {
-      if (!settings.enableSimilar) return null;
-
-      const applyToSimilarButton = document.createElement('button');
-      applyToSimilarButton.textContent = settings.enableCompact ? '✨' : '✨ Apply to similar';
-      applyToSimilarButton.title = 'Apply to similar';
-      applyToSimilarButton.style.fontSize = '10px';
-      applyToSimilarButton.style.padding = settings.enableCompact ? '2px' : '2px 4px';
-      applyToSimilarButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      applyToSimilarButton.style.border = 'none';
-      applyToSimilarButton.style.borderRadius = '4px';
-      applyToSimilarButton.style.color = 'white';
-      applyToSimilarButton.style.cursor = 'pointer';
-      applyToSimilarButton.style.transition = 'background-color 0.2s';
-      applyToSimilarButton.style.display = 'flex';
-      applyToSimilarButton.style.alignItems = 'center';
-      applyToSimilarButton.style.justifyContent = 'center';
-      if (settings.enableCompact) {
-        applyToSimilarButton.style.width = '24px';  // Fixed width in compact mode
-        applyToSimilarButton.style.height = '24px';  // Fixed height in compact mode
-        applyToSimilarButton.style.minWidth = '24px';  // Ensure minimum width
       }
+    });
+  }
 
-      applyToSimilarButton.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
+  private applyToAllImages(invertValue: string, hueValue: string): void {
+    document.querySelectorAll('img').forEach(img => {
+      ImageAdjuster.applyImageFilter(img as HTMLImageElement, invertValue, hueValue);
+    });
+  }
 
-        // Get current filter values from the source image's sliders
-        const wrapper = img.parentElement;
-        const sliders = wrapper?.querySelectorAll('input[type="range"]');
-        const invertSlider = sliders?.[0];
-        const hueSlider = sliders?.[1];
+  private resetAllImages(): void {
+    document.querySelectorAll('img').forEach(img => {
+      ImageAdjuster.applyImageFilter(img as HTMLImageElement, '0', '0');
+    });
+  }
 
-        if (!invertSlider || !hueSlider) return;
+  // Static utility methods
+  static applyImageFilter(targetImg: HTMLImageElement, invertValue: string, hueValue: string): void {
+    targetImg.style.filter = `invert(${invertValue}) hue-rotate(${hueValue}deg)`;
 
-        const invertValue = (invertSlider as HTMLInputElement).value;
-        const hueValue = (hueSlider as HTMLInputElement).value;
+    const wrapper = targetImg.parentElement;
+    if (wrapper?.classList.contains('dark-controls-wrapper')) {
+      const invertSlider = wrapper.querySelector('input[type="range"]:first-of-type') as HTMLInputElement;
+      const hueSlider = wrapper.querySelector('input[type="range"]:nth-of-type(2)') as HTMLInputElement;
 
-        // Find all images and apply filter to similar ones
-        const images = document.querySelectorAll('img');
-        for (const targetImg of images) {
-          if (targetImg !== img && isSimilarImage(img, targetImg as HTMLImageElement)) {
-            const result = await calculateAutoAdjust(targetImg as HTMLImageElement);
+      if (invertSlider) invertSlider.value = invertValue;
+      if (hueSlider) hueSlider.value = hueValue;
+    }
+  }
 
-            // Only apply if the target image isn't too dark
-            if (!result.skipEffects) {
-              applyImageFilter(targetImg as HTMLImageElement, invertValue, hueValue);
-            }
-          }
-        }
-      });
+  static async calculateAutoAdjust(img: HTMLImageElement): Promise<AutoAdjustResult> {
+    const bgColor = ImageAnalyzer.getBackgroundColor(img.parentElement);
+    const match = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
 
-      applyToSimilarButton.addEventListener('mouseenter', () => {
-        applyToSimilarButton.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
-      });
-      applyToSimilarButton.addEventListener('mouseleave', () => {
-        applyToSimilarButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      });
+    if (!match) return { invertValue: 0, skipEffects: true };
 
-      return applyToSimilarButton;
+    const [r, g, b] = [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
+    const bgBrightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const imgBrightness = await ImageAnalyzer.analyzeBrightness(img);
+
+    const brightnessDifference = Math.abs(bgBrightness - imgBrightness);
+    if (brightnessDifference < 0.3 || imgBrightness < 0.3) {
+      return { invertValue: 0, skipEffects: true };
     }
 
-    function createResetButton(img: HTMLImageElement): HTMLButtonElement | null {
-      if (!settings.enableReset) return null;
+    const invertValue = bgBrightness < 0.5
+      ? 1 - bgBrightness * 2
+      : (1 - bgBrightness) * 2;
 
-      const resetButton = document.createElement('button');
-      resetButton.textContent = settings.enableCompact ? '↺' : '↺ Reset';
-      resetButton.title = 'Reset';
-      resetButton.style.fontSize = '10px';
-      resetButton.style.padding = settings.enableCompact ? '2px' : '2px 4px';
-      resetButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      resetButton.style.border = 'none';
-      resetButton.style.borderRadius = '4px';
-      resetButton.style.color = 'white';
-      resetButton.style.cursor = 'pointer';
-      resetButton.style.transition = 'background-color 0.2s';
-      resetButton.style.display = 'flex';
-      resetButton.style.alignItems = 'center';
-      resetButton.style.justifyContent = 'center';
-      if (settings.enableCompact) {
-        resetButton.style.width = '24px';  // Fixed width in compact mode
-        resetButton.style.height = '24px';  // Fixed height in compact mode
-        resetButton.style.minWidth = '24px';  // Ensure minimum width
-      }
+    return { invertValue, skipEffects: false };
+  }
 
-      resetButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-
-        const wrapper = img.parentElement;
-        const sliders = wrapper?.querySelectorAll('input[type="range"]');
-        const invertSlider = sliders?.[0];
-        const hueSlider = sliders?.[1];
-
-        if (invertSlider) (invertSlider as HTMLInputElement).value = '0';
-        if (hueSlider) (hueSlider as HTMLInputElement).value = '0';
-        applyImageFilter(img, '0', '0');
-      });
-
-      resetButton.addEventListener('mouseenter', () => {
-        resetButton.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
-      });
-      resetButton.addEventListener('mouseleave', () => {
-        resetButton.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-      });
-
-      return resetButton;
-    }
-
-    // Helper function for applying filters
-    function applyImageFilter(targetImg: HTMLImageElement, invertValue: string, hueValue: string) {
-      targetImg.style.filter = `invert(${invertValue}) hue-rotate(${hueValue}deg)`;
-
-      // Update sliders to match the applied filter
-      const wrapper = targetImg.parentElement;
-      if (wrapper?.classList.contains('dark-controls-wrapper')) {
-        const invertSlider = wrapper.querySelector('input[type="range"]:first-of-type') as HTMLInputElement;
-        const hueSlider = wrapper.querySelector('input[type="range"]:nth-of-type(2)') as HTMLInputElement;
-
-        if (invertSlider) invertSlider.value = invertValue;
-        if (hueSlider) hueSlider.value = hueValue;
-      }
-    }
-
-    // Helper function to determine if a color is dark
-    function isDarkColor(color: string): boolean {
-      // Parse RGB values
-      const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
-      if (!match) return false;
-
-      const r = parseInt(match[1]);
-      const g = parseInt(match[2]);
-      const b = parseInt(match[3]);
-
-      // Calculate luminance
-      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-      return luminance < 0.5;
-    }
-
-    // Add this new helper function to analyze image brightness
-    function analyzeImage(img: HTMLImageElement): Promise<number> {
-      return new Promise((resolve) => {
-        // Create a canvas to analyze the image
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-
-        // Function to calculate once image is loaded
-        const calculate = () => {
-          if (!context) {
-            resolve(0.5); // Default to middle brightness if we can't analyze
-            return;
-          }
-
-          // Set canvas size to match image
-          canvas.width = img.naturalWidth || img.width;
-          canvas.height = img.naturalHeight || img.height;
-
-          // Draw image to canvas
-          context.drawImage(img, 0, 0);
-
-          try {
-            // Get image data
-            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-            const data = imageData.data;
-
-            let totalBrightness = 0;
-            // Sample every 4th pixel for performance (r,g,b,a = 4 values per pixel)
-            for (let i = 0; i < data.length; i += 16) {
-              const r = data[i];
-              const g = data[i + 1];
-              const b = data[i + 2];
-              // Use perceived brightness formula
-              totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-            }
-
-            // Average brightness between 0 and 1
-            const avgBrightness = totalBrightness / (data.length / 16);
-            resolve(avgBrightness);
-          } catch (e) {
-            // If we can't access image data (CORS), fall back to middle brightness
-            resolve(0.5);
-          }
-        };
-
-        // If image is already loaded, calculate immediately
-        if (img.complete) {
-          calculate();
-        } else {
-          // Wait for image to load
-          img.onload = calculate;
-        }
-      });
-    }
-
-    // Create an interface for the auto-adjust result
-    interface AutoAdjustResult {
-      invertValue: number;
-      skipEffects: boolean;
-    }
-
-    // Update the function to return both values
-    async function calculateAutoAdjust(img: HTMLImageElement): Promise<AutoAdjustResult> {
-      const getBackgroundColor = (element: Element | null): string => {
-        while (element) {
-          const bgColor = window.getComputedStyle(element).backgroundColor;
-          if (bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-            return bgColor;
-          }
-          element = element.parentElement;
-        }
-        return window.getComputedStyle(document.body).backgroundColor;
-      };
-
-      const bgColor = getBackgroundColor(img.parentElement);
-      const match = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
-
-      if (!match) return { invertValue: 0, skipEffects: true };
-
-      const [r, g, b] = [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
-      const bgBrightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-      const imgBrightness = await analyzeImage(img);
-
-      const brightnessDifference = Math.abs(bgBrightness - imgBrightness);
-      if (brightnessDifference < 0.3 || imgBrightness < 0.3) {
-        return { invertValue: 0, skipEffects: true };
-      }
-
-      const invertValue = bgBrightness < 0.5
-        ? 1 - bgBrightness * 2
-        : (1 - bgBrightness) * 2;
-
-      return {
-        invertValue,
-        skipEffects: false
-      };
-    }
-
-    // Optional: Clean up observer when extension is disabled/unloaded
-    return () => {
-      observer.disconnect();
+  static isSimilarImage(sourceImg: HTMLImageElement, targetImg: HTMLImageElement): boolean {
+    const isInArticle = (img: HTMLImageElement): boolean => {
+      return !!img.closest('article') ||
+        !!img.closest('[role="article"]') ||
+        !!img.closest('.post') ||
+        !!img.closest('.article');
     };
+
+    const isLikelyIcon = (img: HTMLImageElement): boolean => {
+      const size = Math.max(img.width, img.height);
+      return size <= 64 ||
+        img.closest('nav') !== null ||
+        img.closest('header') !== null ||
+        img.closest('footer') !== null ||
+        img.closest('.social') !== null ||
+        img.src.toLowerCase().includes('icon') ||
+        img.src.toLowerCase().includes('logo');
+    };
+
+    const sourceInArticle = isInArticle(sourceImg);
+    const targetInArticle = isInArticle(targetImg);
+    const sourceIsIcon = isLikelyIcon(sourceImg);
+    const targetIsIcon = isLikelyIcon(targetImg);
+
+    return sourceInArticle === targetInArticle && !sourceIsIcon && !targetIsIcon;
+  }
+
+  cleanup(): void {
+    this.observer.disconnect();
+    if (this.scrollTimeout) {
+      window.clearTimeout(this.scrollTimeout);
+    }
+  }
+}
+
+// Export the content script
+export default defineContentScript({
+  matches: ['<all_urls>'],
+  async main() {
+    const adjuster = new ImageAdjuster();
+    await adjuster.initialize();
+    return () => adjuster.cleanup();
   }
 });

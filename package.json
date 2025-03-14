@@ -1,8 +1,10 @@
 {
   "name": "image-darkista-webext",
-  "description": "manifest.json description",
+  "description": "Web extension for inverting images while preserving the original hue.",
+  "author": "Matúš Bielik",
+  "license": "MIT",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",

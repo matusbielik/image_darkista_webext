@@ -4,6 +4,8 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   extensionApi: 'chrome',
   manifest: {
+    name: 'Image Darkista',
+    version: '0.2.0',
     permissions: [
       'storage'
     ]

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dark Image Adjuster</title>
+  <style>
+    body {
+      width: 300px;
+      padding: 15px;
+      font-family: system-ui, sans-serif;
+    }
+
+    .settings-section {
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 15px;
+      margin-bottom: 15px;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .slider-container {
+      margin-bottom: 15px;
+      opacity: 1;
+      transition: opacity 0.3s;
+    }
+
+    .slider-container.disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .icon-button {
+      padding: 4px;
+      border-radius: 4px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.2s;
+    }
+
+    .icon-button:hover {
+      background-color: rgba(100, 100, 100, 0.1);
+    }
+
+    .icon-button.disabled {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="settings-section">
+    <h3>Settings</h3>
+    <div class="control-group">
+      <input type="checkbox" id="enable-compact">
+      <label for="enable-compact">Compact Mode (Icons Only)</label>
+    </div>
+    <div class="control-group">
+      <input type="checkbox" id="enable-invert" checked>
+      <label for="enable-invert">Invert Slider</label>
+    </div>
+    <div class="control-group">
+      <input type="checkbox" id="enable-hue" checked>
+      <label for="enable-hue">Hue Slider</label>
+    </div>
+    <div class="control-group">
+      <input type="checkbox" id="enable-auto" checked>
+      <label for="enable-auto">Auto-match Button</label>
+    </div>
+    <div class="control-group">
+      <input type="checkbox" id="enable-similar" checked>
+      <label for="enable-similar">Apply to Similar Button</label>
+    </div>
+    <div class="control-group">
+      <input type="checkbox" id="enable-reset" checked>
+      <label for="enable-reset">Reset Button</label>
+    </div>
+  </div>
+
+  <div id="invert-container" class="slider-container">
+    <label for="invert">Invert: <span id="invert-value">0.8</span></label>
+    <input type="range" id="invert" min="0" max="1" step="0.1" value="0.8">
+  </div>
+
+  <div id="hue-container" class="slider-container">
+    <label for="hue">Hue Rotation: <span id="hue-value">180</span>°</label>
+    <input type="range" id="hue" min="0" max="360" step="10" value="180">
+  </div>
+
+  <div class="control-group">
+    <button id="apply-all" class="icon-button" title="Apply to All Images">🖼️</button>
+    <button id="reset-all" class="icon-button" title="Reset All Images">↺</button>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+
+</html>

@@ -131,7 +131,11 @@ class SliderComponent extends UIComponent {
     defaultValue: string;
   };
 
-  constructor(img: HTMLImageElement, settings: Settings, type: 'invert' | 'hue') {
+  constructor(
+    img: HTMLImageElement,
+    settings: Settings,
+    type: 'invert' | 'hue',
+  ) {
     super(img, settings);
     this.type = type;
     this.config = type === 'invert' ? {
@@ -160,6 +164,11 @@ class SliderComponent extends UIComponent {
     container.style.alignItems = 'center';
     container.style.gap = this.settings.enableCompact ? '2px' : '4px';
 
+    container.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+    });
+
     const label = document.createElement('label');
     label.textContent = this.config.label;
     label.style.fontSize = '12px';
@@ -171,6 +180,7 @@ class SliderComponent extends UIComponent {
     slider.step = this.config.step;
     slider.value = this.config.defaultValue;
     slider.style.width = this.settings.enableCompact ? '40px' : '60px';
+    slider.classList.add(`${this.type}-slider`);
 
     slider.addEventListener('input', this.handleInput.bind(this));
 
@@ -251,18 +261,13 @@ class ActionButton extends UIComponent {
     const wrapper = this.img.parentElement;
     if (!wrapper) return;
 
-    const sliders = wrapper.querySelectorAll('input[type="range"]');
-    const invertSlider = sliders[0] as HTMLInputElement;
-    const hueSlider = sliders[1] as HTMLInputElement;
-
     if (result.skipEffects) {
-      if (invertSlider) invertSlider.value = '0';
-      if (hueSlider) hueSlider.value = '0';
+      ImageAdjuster.setSlidersValues(this.img, '0', '0');
       this.img.style.filter = '';
     } else {
-      if (invertSlider) invertSlider.value = result.invertValue.toString();
-      if (hueSlider) hueSlider.value = '180';
-      ImageAdjuster.applyImageFilter(this.img, result.invertValue.toString(), '180');
+      const invertValue = result.invertValue.toString();
+      ImageAdjuster.setSlidersValues(this.img, invertValue, '180');
+      ImageAdjuster.applyImageFilter(this.img, invertValue, '180');
     }
   }
 
@@ -289,6 +294,7 @@ class ActionButton extends UIComponent {
         // Only apply if both images have similar characteristics
         if (!targetResult.skipEffects &&
           Math.abs(sourceResult.invertValue - targetResult.invertValue) < 0.3) {
+          ImageAdjuster.setSlidersValues(targetImg as HTMLImageElement, invertValue, hueValue);
           ImageAdjuster.applyImageFilter(targetImg as HTMLImageElement, invertValue, hueValue);
 
           // Also update controls if they exist for this image
@@ -420,21 +426,32 @@ class ImageAdjuster {
 
   private processExistingImages(): void {
     document.querySelectorAll('img').forEach(img => {
+      const parent = img.parentElement;
+      if (parent?.tagName === 'A') { // check if parent is an anchor element
+        parent.addEventListener('dragstart', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        });
+      }
+
       this.addControlsToImage(img as HTMLImageElement);
     });
   }
 
   private addControlsToImage(img: HTMLImageElement): void {
+    const imgStyle = window.getComputedStyle(img);
+    if (imgStyle.display === 'none') return;
+    if (imgStyle.visibility === 'hidden') return;
     if (img.hasAttribute('has-dark-controls')) return;
     img.setAttribute('has-dark-controls', 'true');
 
-    const wrapper = this.createWrapper(img);
+    const wrapper = this.createWrapper();
     const controlContainer = this.createControlContainer(img);
 
     this.setupImageWrapper(img, wrapper, controlContainer);
   }
 
-  private createWrapper(img: HTMLImageElement): HTMLDivElement {
+  private createWrapper(): HTMLDivElement {
     const wrapper = document.createElement('div');
     wrapper.classList.add('dark-controls-wrapper');
     wrapper.style.position = 'relative';
@@ -446,15 +463,22 @@ class ImageAdjuster {
   }
 
   private createControlContainer(img: HTMLImageElement): HTMLDivElement {
+    const imgStyle = window.getComputedStyle(img);
+    const padding = parseInt(imgStyle.padding);
+    const border = parseInt(imgStyle.borderWidth);
+    const total = padding + border;
+
     const container = document.createElement('div');
     container.className = 'dark-image-controls';
     container.style.position = 'absolute';
-    container.style.top = '0';
-    container.style.right = '0';
+    container.style.top = `${total}px`;
+    container.style.right = `${total}px`;
     container.style.zIndex = '9999';
     container.style.display = 'none';
     container.style.padding = this.settings.enableCompact ? '4px' : '8px';
     container.style.borderRadius = '8px';
+    container.style.borderTopRightRadius = '0';
+    container.style.borderBottomRightRadius = '0';
     container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
     container.style.color = 'white';
     container.style.flexDirection = 'column';
@@ -556,8 +580,27 @@ class ImageAdjuster {
     });
   }
 
+  static setSlidersValues(
+    img: HTMLImageElement,
+    invertValue: string,
+    hueValue: string,
+  ): void {
+    const wrapper = img.parentElement;
+    if (!wrapper || !wrapper.classList.contains('dark-controls-wrapper')) return;
+
+    const sliders = wrapper.querySelectorAll('input[type="range"]');
+    for (const slider of (sliders as unknown as HTMLInputElement[])) {
+      if (slider.classList.contains('invert-slider')) {
+        slider.value = invertValue;
+      } else if (slider.classList.contains('hue-slider')) {
+        slider.value = hueValue;
+      }
+    }
+  }
+
   private applyToAllImages(invertValue: string, hueValue: string): void {
     document.querySelectorAll('img').forEach(img => {
+      ImageAdjuster.setSlidersValues(img as HTMLImageElement, invertValue, hueValue);
       ImageAdjuster.applyImageFilter(img as HTMLImageElement, invertValue, hueValue);
     });
   }
@@ -571,15 +614,6 @@ class ImageAdjuster {
   // Static utility methods
   static applyImageFilter(targetImg: HTMLImageElement, invertValue: string, hueValue: string): void {
     targetImg.style.filter = `invert(${invertValue}) hue-rotate(${hueValue}deg)`;
-
-    const wrapper = targetImg.parentElement;
-    if (wrapper?.classList.contains('dark-controls-wrapper')) {
-      const invertSlider = wrapper.querySelector('input[type="range"]:first-of-type') as HTMLInputElement;
-      const hueSlider = wrapper.querySelector('input[type="range"]:nth-of-type(2)') as HTMLInputElement;
-
-      if (invertSlider) invertSlider.value = invertValue;
-      if (hueSlider) hueSlider.value = hueValue;
-    }
   }
 
   static async calculateAutoAdjust(img: HTMLImageElement): Promise<AutoAdjustResult> {

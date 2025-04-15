@@ -4,7 +4,7 @@
   "author": "Matúš Bielik",
   "license": "MIT",
   "private": true,
-  "version": "0.2.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -17,8 +17,8 @@
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
-    "@types/chrome": "0.0.309",
+    "@types/chrome": "0.0.315",
     "typescript": "^5.6.3",
-    "wxt": "^0.19.29"
+    "wxt": "^0.20.1"
   }
 }

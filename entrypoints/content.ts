@@ -1,5 +1,4 @@
-import { defineContentScript } from 'wxt/sandbox';
-import { browser } from 'wxt/browser';
+import { defineContentScript, browser } from '#imports';
 import './content-styles.css'; // Assuming this CSS file exists and is correct
 
 // --- Constants for Configuration & Magic Numbers ---

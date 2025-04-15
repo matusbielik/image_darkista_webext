@@ -1,5 +1,5 @@
 // popup.ts
-import { browser } from 'wxt/browser'
+import { browser } from '#imports'
 
 // Define settings type
 interface Settings {

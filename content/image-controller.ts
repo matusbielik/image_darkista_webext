@@ -42,6 +42,8 @@ export class ImageController {
     HTMLImageElement,
     ControlledImageElements
   >();
+  private initialized = false;
+  private initialization: Promise<void> | undefined;
 
   constructor() {
     this.mutationObserver = new MutationObserver(
@@ -50,7 +52,16 @@ export class ImageController {
   }
 
   async init(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initialization) return this.initialization;
+    this.initialization = this.initialize();
+    try { await this.initialization; }
+    finally { this.initialization = undefined; }
+  }
+
+  private async initialize(): Promise<void> {
     this.settings = await loadSettings();
+    if (this.initialized) return;
     this.processImages(document.body);
     this.mutationObserver.observe(document.body, {
       childList: true,
@@ -60,6 +71,7 @@ export class ImageController {
     });
     browser.storage.onChanged.addListener(this.handleStorageChanged);
     browser.runtime.onMessage.addListener(this.handleRuntimeMessage);
+    this.initialized = true;
   }
 
   private readonly handleStorageChanged = (
@@ -103,48 +115,40 @@ export class ImageController {
     }
   }
 
-  private handleMutations(mutations: MutationRecord[]): void {
-    let needsPositionUpdate = new Set<HTMLImageElement>();
-
-    for (const mutation of mutations) {
-
-      if (mutation.type === 'childList') {
-        mutation.addedNodes.forEach(node => {
-          if (node instanceof Element) {
-            this.processImages(node);
-          }
+  private handleMutations(records: MutationRecord[]): void {
+    const positionUpdates = new Set<HTMLImageElement>();
+    for (const record of records) {
+      if (record.type === 'childList') {
+        record.addedNodes.forEach(node => {
+          if (node instanceof Element) this.processImages(node);
         });
-        mutation.removedNodes.forEach(node => {
-          if (node instanceof Element) {
-            this.cleanupRemovedImages(node);
-          }
+        record.removedNodes.forEach(node => {
+          if (node instanceof Element) this.cleanupRemovedImages(node);
         });
-      } else if (mutation.type === 'attributes') {
-        if (mutation.target instanceof HTMLImageElement) {
-          const img = mutation.target;
-          if (this.controlledImages.has(img)) {
-            needsPositionUpdate.add(img);
-            if (!this.isEligibleImage(img, true)) {
-              console.log("Image became ineligible, removing controls:", img.src);
-              this.removeControlsForImage(img);
-            }
-          } else if (this.isEligibleImage(img)) {
-            console.log("Image became eligible, adding controls:", img.src);
-            this.addControlsToImage(img);
+      } else if (record.type === 'attributes'
+        && record.target instanceof HTMLImageElement) {
+        const image = record.target;
+        if (this.controlledImages.has(image)) {
+          if (!this.isEligibleImage(image, true)) {
+            this.removeControlsForImage(image);
+          } else {
+            positionUpdates.add(image);
           }
+        } else if (this.isEligibleImage(image)) {
+          this.addControlsToImage(image);
         }
       }
     }
-
-    needsPositionUpdate.forEach(img => this.updateControlsPosition(img));
+    positionUpdates.forEach(image => this.updateControlsPosition(image));
   }
 
-
-  private processImages(rootElement: Element): void {
-    const images = rootElement.matches('img') ? [rootElement as HTMLImageElement] : Array.from(rootElement.querySelectorAll('img'));
-    images.forEach(img => {
-      if (this.isEligibleImage(img)) {
-        this.addControlsToImage(img);
+  private processImages(root: Element): void {
+    const images = root.matches('img')
+      ? [root as HTMLImageElement]
+      : Array.from(root.querySelectorAll<HTMLImageElement>('img'));
+    images.forEach(image => {
+      if (!this.controlledImages.has(image) && this.isEligibleImage(image)) {
+        this.addControlsToImage(image);
       }
     });
   }
@@ -164,13 +168,11 @@ export class ImageController {
   }
 
 
-  private cleanupRemovedImages(rootElement: Element): void {
-    const images = rootElement.matches('img') ? [rootElement as HTMLImageElement] : Array.from(rootElement.querySelectorAll('img'));
-    images.forEach(img => {
-      if (this.controlledImages.has(img)) {
-        this.removeControlsForImage(img);
-      }
-    });
+  private cleanupRemovedImages(root: Element): void {
+    const images = root.matches('img')
+      ? [root as HTMLImageElement]
+      : Array.from(root.querySelectorAll<HTMLImageElement>('img'));
+    images.forEach(image => this.removeControlsForImage(image));
   }
 
   private addControlsToImage(image: HTMLImageElement): void {
@@ -502,11 +504,11 @@ export class ImageController {
   }
 
   cleanup(): void {
+    if (!this.initialized && this.controlledImages.size === 0) return;
     this.mutationObserver.disconnect();
     browser.storage.onChanged.removeListener(this.handleStorageChanged);
     browser.runtime.onMessage.removeListener(this.handleRuntimeMessage);
-    for (const image of this.controlledImages.keys()) {
-      this.removeControlsForImage(image);
-    }
+    for (const image of this.controlledImages.keys()) this.removeControlsForImage(image);
+    this.initialized = false;
   }
 }

@@ -218,4 +218,29 @@ it('removes both global listener references on cleanup', async () => {
   expect(browser.storage.onChanged.hasListeners()).toBe(false);
   expect(browser.runtime.onMessage.hasListeners()).toBe(false);
 });
+
+it('preserves mutation options, dynamic discovery, eligibility, and repeat safety', async () => {
+  const controller = new ImageController();
+  await Promise.all([controller.init(), controller.init()]); await controller.init();
+  expect(MO.all).toHaveLength(1);
+  expect(MO.all[0].observe).toHaveBeenCalledOnce();
+  expect(MO.all[0].observe).toHaveBeenCalledWith(document.body, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['src', 'style', 'class', 'width', 'height'],
+  });
+  const section = document.createElement('section'); const dynamic = fixture('/dynamic.png');
+  dynamic.image.remove(); section.append(dynamic.image); document.body.append(section);
+  MO.all[0].emit([{ type: 'childList', addedNodes: [section], removedNodes: [] } as unknown as MutationRecord]);
+  expect(controls()).toHaveLength(1);
+  const frame = vi.fn((cb: FrameRequestCallback) => { cb(0); return 1; });
+  vi.stubGlobal('requestAnimationFrame', frame);
+  MO.all[0].emit([{ type: 'attributes', target: dynamic.image, attributeName: 'width' } as unknown as MutationRecord]);
+  expect(frame).toHaveBeenCalled();
+  dynamic.setSize(10, 10);
+  MO.all[0].emit([{ type: 'attributes', target: dynamic.image, attributeName: 'height' } as unknown as MutationRecord]);
+  expect(controls()).toHaveLength(0);
+  controller.cleanup(); controller.cleanup();
+  expect(browser.storage.onChanged.hasListeners()).toBe(false);
+  expect(browser.runtime.onMessage.hasListeners()).toBe(false);
+});
 });

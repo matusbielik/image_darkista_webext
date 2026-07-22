@@ -14,11 +14,15 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
-    "@types/chrome": "0.0.315",
-    "typescript": "^5.6.3",
+    "@types/chrome": "0.0.332",
+    "happy-dom": "^20.11.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10",
     "wxt": "^0.20.1"
   }
 }

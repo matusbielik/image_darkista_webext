@@ -1,13 +1,12 @@
-
 import { browser } from '#imports';
 import { areImagesSimilar, calculateAutoAdjust } from './image-analyzer';
+import type { ContentCommand } from '../shared/messages';
 import {
   SETTINGS_STORAGE_KEY,
   loadSettings,
   mergeSettings,
   type Settings,
 } from '../shared/settings';
-import type { ContentCommand } from '../shared/messages';
 
 const MIN_IMAGE_DIMENSION = 20;
 const CONTROLS_Z_INDEX = '2147483647';
@@ -55,8 +54,11 @@ export class ImageController {
     if (this.initialized) return;
     if (this.initialization) return this.initialization;
     this.initialization = this.initialize();
-    try { await this.initialization; }
-    finally { this.initialization = undefined; }
+    try {
+      await this.initialization;
+    } finally {
+      this.initialization = undefined;
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -125,8 +127,10 @@ export class ImageController {
         record.removedNodes.forEach(node => {
           if (node instanceof Element) this.cleanupRemovedImages(node);
         });
-      } else if (record.type === 'attributes'
-        && record.target instanceof HTMLImageElement) {
+      } else if (
+        record.type === 'attributes'
+        && record.target instanceof HTMLImageElement
+      ) {
         const image = record.target;
         if (this.controlledImages.has(image)) {
           if (!this.isEligibleImage(image, true)) {
@@ -166,7 +170,6 @@ export class ImageController {
     }
     return true;
   }
-
 
   private cleanupRemovedImages(root: Element): void {
     const images = root.matches('img')
@@ -418,82 +421,61 @@ export class ImageController {
     );
   }
 
-  private async handleAutoClick(img: HTMLImageElement): Promise<void> {
-    console.log("Auto-adjust clicked for:", img.src);
+  private async handleAutoClick(image: HTMLImageElement): Promise<void> {
     try {
-      const result = await calculateAutoAdjust(img);
-      console.log("Auto-adjust result:", result);
-
+      const result = await calculateAutoAdjust(image);
       if (result.skipEffects) {
-        this.updateSliderValues(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-        this.applyImageFilter(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-        console.log("Auto-adjust: Skipping effects based on analysis.");
+        this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+        this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
       } else {
         const invertValue = result.invertValue.toFixed(1);
-        const hueValue = AUTO_INVERT_HUE_VALUE;
-        console.log(`Auto-adjust applying: Invert=${invertValue}, Hue=${hueValue}`);
-        this.updateSliderValues(img, invertValue, hueValue);
-        this.applyImageFilter(img, invertValue, hueValue);
+        this.updateSliderValues(image, invertValue, AUTO_INVERT_HUE_VALUE);
+        this.applyImageFilter(image, invertValue, AUTO_INVERT_HUE_VALUE);
       }
     } catch (error) {
-      console.error("Error during handleAutoClick:", error);
+      console.error('Failed to auto-adjust image:', error);
     }
   }
 
-  private async handleSimilarClick(sourceImg: HTMLImageElement): Promise<void> {
-    console.log("Apply Similar clicked for:", sourceImg.src);
-    const sourceElements = this.controlledImages.get(sourceImg);
-    if (!sourceElements) return;
-
-    const invertValue = sourceElements.invertSlider?.value ?? INVERT_DEFAULT_VALUE;
-    const hueValue = sourceElements.hueSlider?.value ?? HUE_DEFAULT_VALUE;
-
-    let appliedCount = 0;
-    console.log("Searching for similar images");
-    for (const [targetImg] of this.controlledImages.entries()) {
-      if (targetImg === sourceImg) continue;
-
-      const isSimilar = this.isSimilarImage(sourceImg, targetImg);
-      console.log(`Comparing to: ${targetImg.src}, Is Similar: ${isSimilar}`);
-
-      if (isSimilar) {
-        const targetAdjustResult = await calculateAutoAdjust(targetImg);
-
-        if (targetAdjustResult.skipEffects) {
-          console.log(`Skipping application to ${targetImg.src}: Target analysis suggests skipping effects.`);
-        } else {
-          console.log(`Applying filters to similar image: ${targetImg.src}`);
-          this.updateSliderValues(targetImg, invertValue, hueValue);
-          this.applyImageFilter(targetImg, invertValue, hueValue);
-          appliedCount++;
-        }
+  private async handleSimilarClick(
+    sourceImage: HTMLImageElement,
+  ): Promise<void> {
+    const source = this.controlledImages.get(sourceImage);
+    if (!source) return;
+    const invertValue = source.invertSlider.value;
+    const hueValue = source.hueSlider.value;
+    for (const targetImage of this.controlledImages.keys()) {
+      if (
+        targetImage === sourceImage
+        || !this.isSimilarImage(sourceImage, targetImage)
+      ) {
+        continue;
+      }
+      const result = await calculateAutoAdjust(targetImage);
+      if (!result.skipEffects) {
+        this.updateSliderValues(targetImage, invertValue, hueValue);
+        this.applyImageFilter(targetImage, invertValue, hueValue);
       }
     }
-    console.log(`Apply Similar: Applied filters to ${appliedCount} similar images.`);
   }
 
-  private handleResetClick(img: HTMLImageElement): void {
-    console.log("Reset clicked for:", img.src);
-    this.updateSliderValues(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-    this.applyImageFilter(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+  private handleResetClick(image: HTMLImageElement): void {
+    this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+    this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
   }
 
   private applyToAllImages(invertValue: string, hueValue: string): void {
-    console.log(`Applying to all: Invert=${invertValue}, Hue=${hueValue}`);
-    console.log("Images in map for Apply All:", Array.from(this.controlledImages.keys()).map(img => img.src));
-    this.controlledImages.forEach((elements, img) => {
-      this.updateSliderValues(img, invertValue, hueValue);
-      this.applyImageFilter(img, invertValue, hueValue);
-    });
+    for (const image of this.controlledImages.keys()) {
+      this.updateSliderValues(image, invertValue, hueValue);
+      this.applyImageFilter(image, invertValue, hueValue);
+    }
   }
 
   private resetAllImages(): void {
-    console.log("Resetting all images");
-    console.log("Images in map for Reset All:", Array.from(this.controlledImages.keys()).map(img => img.src));
-    this.controlledImages.forEach((elements, img) => {
-      this.updateSliderValues(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-      this.applyImageFilter(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-    });
+    for (const image of this.controlledImages.keys()) {
+      this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+      this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+    }
   }
 
   private isSimilarImage(
@@ -508,7 +490,9 @@ export class ImageController {
     this.mutationObserver.disconnect();
     browser.storage.onChanged.removeListener(this.handleStorageChanged);
     browser.runtime.onMessage.removeListener(this.handleRuntimeMessage);
-    for (const image of this.controlledImages.keys()) this.removeControlsForImage(image);
+    for (const image of this.controlledImages.keys()) {
+      this.removeControlsForImage(image);
+    }
     this.initialized = false;
   }
 }

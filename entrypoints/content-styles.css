@@ -1,70 +1,19 @@
-/* content.css */
-
-.dark-controls-wrapper {
-    position: relative;
-    /* Use inline-block by default, tends to work for wrapping most things */
-    display: inline-block;
-    /* Wrapper takes image's original margin (set via JS) */
-    margin: 0;
-    /* Ensure wrapper respects flow */
-    vertical-align: top;
-    /* Or middle, or bottom, matching image if needed */
-    /* Let content determine size */
-    width: auto;
-    height: auto;
-    /* Ensure no borders or padding interfere unless intended */
-    border: none;
-    padding: 0;
-    /* Add for debugging if needed: border: 1px solid red; */
-}
-
-/* Ensure image inside wrapper displays correctly and doesn't collapse */
-.dark-controls-wrapper>img {
-    display: block;
-    /* Treat image as a block inside the wrapper */
-    max-width: 100%;
-    /* Prevent overflow */
-    height: auto;
-    /* Maintain aspect ratio */
-    margin: 0 !important;
-    /* Override any specific image margins */
-    padding: 0;
-    border: none;
-    position: relative;
-    /* Optional, but can help stacking context */
-    /* Add for debugging if needed: border: 1px solid blue; */
-}
-
-
 .dark-image-controls {
     position: absolute;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 100px;
+    padding: 5px;
+    box-sizing: border-box;
     background-color: rgba(40, 40, 40, 0.9);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 5px;
-    padding: 5px;
-    display: none;
-    /* Hidden by default, shown on hover */
-    flex-direction: column;
-    /* Default: Stack controls vertically */
-    gap: 4px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
     transition: opacity 0.2s ease-in-out;
-    /* Smooth show/hide */
     z-index: 2147483647;
-    /* Ensure it's on top */
-    /* NEW: Constrain the maximum width */
-    max-width: 100px;
-    box-sizing: border-box;
-    /* Include padding/border in max-width calculation */
 }
-
-/* Class added when controls should be visible (e.g., on hover) */
-.dark-image-controls.visible {
-    display: flex;
-    /* Use flex when visible */
-}
-
-/* Layout containers within controls */
+.dark-image-controls.visible { display: flex; }
 .dark-controls-main-container,
 .dark-controls-sliders-container,
 .dark-controls-buttons-container {
@@ -72,139 +21,69 @@
     flex-direction: column;
     gap: 4px;
 }
-
-.dark-controls-buttons-container {
-    margin-top: 4px;
-}
-
-/* Slider specific styles */
+.dark-controls-buttons-container { margin-top: 4px; }
 .dark-slider-component,
 .dark-action-button {
     display: flex;
-    /* Use flex for internal alignment */
     align-items: center;
     gap: 4px;
     transition: opacity 0.3s ease-out;
-    /* Smooth hide/show of components */
-    /* Add some styles for when hidden */
 }
-
-/* Class to hide specific components based on settings */
 .dark-component-hidden {
-    opacity: 0;
     height: 0;
-    overflow: hidden;
     padding: 0;
     margin: 0;
+    overflow: hidden;
+    opacity: 0;
     border: none;
 }
-
-/* Slider specific styles */
 .dark-slider-component label {
+    min-width: 20px;
     color: #eee;
     font-size: 12px;
-    min-width: 20px;
-    /* Prevent label jump */
     text-align: center;
 }
-
 .dark-slider-component input[type="range"] {
-    flex-grow: 1;
-    height: 5px;
     width: 100%;
-    /* Make slider thinner */
+    height: 5px;
+    flex-grow: 1;
     cursor: pointer;
 }
-
-/* Button specific styles */
 .dark-action-button {
-    background-color: rgba(80, 80, 80, 0.8);
+    padding: 3px 5px;
     color: #eee;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    background-color: rgba(80, 80, 80, 0.8);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
-    padding: 3px 5px;
-    cursor: pointer;
-    font-size: 12px;
     transition: background-color 0.2s;
-    white-space: nowrap;
-    /* Prevent text wrapping */
 }
-
-.dark-action-button:hover {
-    background-color: rgba(100, 100, 100, 0.9);
-}
-
-.dark-action-button .button-icon {
-    font-size: 14px;
-    /* Slightly larger icon */
-}
-
-/* Styling for text part of the button (hidden in compact) */
-.dark-action-button .button-text {
-    margin-left: 4px;
-    /* display: inline; /* default, managed by compact mode */
-}
-
-/* --- Compact Mode Styles --- */
-
-/* Compact mode: reduce padding/gap */
-.dark-image-controls.compact {
-    gap: 2px;
-    padding: 2px;
-}
-
-/* Hide button text in compact mode */
-.dark-image-controls.compact .button-text {
-    display: none;
-}
-
-/* --- NEW: Style the action button group --- */
-/* Default: Inherit flex column direction from parent */
+.dark-action-button:hover { background-color: rgba(100, 100, 100, 0.9); }
+.dark-action-button .button-icon { font-size: 14px; }
+.dark-action-button .button-text { margin-left: 4px; }
+.dark-image-controls.compact { gap: 2px; padding: 2px; }
+.dark-image-controls.compact .button-text { display: none; }
 .dark-action-buttons-group {
     display: flex;
     flex-direction: column;
     gap: inherit;
     margin-top: 4px;
 }
-
-/* Compact Mode: Make button group horizontal and space buttons */
 .dark-image-controls.compact .dark-action-buttons-group {
     flex-direction: row;
     gap: 2px;
     width: 100%;
     justify-content: space-around;
 }
-
-/* --- NEW: Style buttons to be square in compact mode --- */
 .dark-image-controls.compact .dark-action-button {
-    width: 24px;
-    /* Fixed width */
-    height: 24px;
-    /* Fixed height (equal to width for square) */
-    padding: 0;
-    /* Remove padding to allow centering */
     display: flex;
-    /* Enable flexbox for centering */
     align-items: center;
-    /* Center icon vertically */
     justify-content: center;
-    /* Center icon horizontally */
-    /* Ensure icon itself is centered if it has weird line-height */
+    width: 24px;
+    height: 24px;
+    padding: 0;
     line-height: 1;
 }
-
-.dark-image-controls.compact .dark-action-button .button-icon {
-    margin: 0;
-    /* Remove any default margin */
-}
-
-/* Individual component containers (slider + label, or button) */
-.dark-slider-component,
-.dark-action-button {
-    display: flex;
-    /* Use flex for internal alignment */
-    align-items: center;
-    gap: 4px;
-    transition: opacity 0.3s ease-out;
-    /* Smooth hide/show of components */
-}
+.dark-image-controls.compact .dark-action-button .button-icon { margin: 0; }

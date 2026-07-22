@@ -7,6 +7,7 @@ import {
   mergeSettings,
   type Settings,
 } from '../shared/settings';
+import type { ContentCommand } from '../shared/messages';
 
 const MIN_IMAGE_DIMENSION = 20;
 const CONTROLS_Z_INDEX = '2147483647';
@@ -34,18 +35,6 @@ interface ControlledImageElements {
   abortController: AbortController;
 }
 
-interface UpdateSettingsMessage { action: 'updateSettings'; settings: Settings }
-interface ApplyToAllMessage {
-  action: 'applyToAll';
-  invertValue: string;
-  hueValue: string;
-}
-interface ResetAllMessage { action: 'resetAll' }
-type ContentScriptMessage =
-  | UpdateSettingsMessage
-  | ApplyToAllMessage
-  | ResetAllMessage;
-
 export class ImageController {
   private settings = mergeSettings();
   private readonly mutationObserver: MutationObserver;
@@ -70,7 +59,7 @@ export class ImageController {
       attributeFilter: ['src', 'style', 'class', 'width', 'height'],
     });
     browser.storage.onChanged.addListener(this.handleStorageChanged);
-    this.setupMessageListener();
+    browser.runtime.onMessage.addListener(this.handleRuntimeMessage);
   }
 
   private readonly handleStorageChanged = (
@@ -85,29 +74,28 @@ export class ImageController {
     this.applySettingsToAllControls();
   };
 
-  private readonly handleRuntimeMessage = (
-    message: unknown,
-  ): boolean | undefined => {
-    if (typeof message === 'object' && message !== null && 'action' in message) {
-      this.handleMessage(message as ContentScriptMessage);
-      return true;
+  private readonly handleRuntimeMessage = (message: unknown): void => {
+    if (typeof message !== 'object' || message === null) return;
+    const value = message as Record<string, unknown>;
+    if (
+      value.action === 'applyToAll'
+      && typeof value.invertValue === 'string'
+      && typeof value.hueValue === 'string'
+    ) {
+      this.handleCommand({
+        action: 'applyToAll',
+        invertValue: value.invertValue,
+        hueValue: value.hueValue,
+      });
+    } else if (value.action === 'resetAll') {
+      this.handleCommand({ action: 'resetAll' });
     }
-    console.warn('Received invalid message format:', message);
-    return undefined;
   };
 
-  private setupMessageListener(): void {
-    browser.runtime.onMessage.addListener(this.handleRuntimeMessage);
-  }
-
-  private handleMessage(message: ContentScriptMessage): void {
-    switch (message.action) {
-      case 'updateSettings':
-        this.settings = mergeSettings(message.settings);
-        this.applySettingsToAllControls();
-        break;
+  private handleCommand(command: ContentCommand): void {
+    switch (command.action) {
       case 'applyToAll':
-        this.applyToAllImages(message.invertValue, message.hueValue);
+        this.applyToAllImages(command.invertValue, command.hueValue);
         break;
       case 'resetAll':
         this.resetAllImages();

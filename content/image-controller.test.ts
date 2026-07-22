@@ -135,4 +135,87 @@ it('recreates controls once when a removed image is rediscovered', async () => {
   expect(IO.all).toHaveLength(2);
   controller.cleanup();
 });
+
+it('applies and resets typed bulk values', async () => {
+  const first = fixture('/bulk-first.png').image;
+  const second = fixture('/bulk-second.png').image;
+  const controller = new ImageController();
+  await controller.init();
+
+  await fakeBrowser.runtime.sendMessage({
+    action: 'applyToAll', invertValue: '.8', hueValue: '180',
+  });
+  expect(first.style.filter).toBe('invert(0.8) hue-rotate(180deg)');
+  expect(second.style.filter).toBe('invert(0.8) hue-rotate(180deg)');
+
+  await fakeBrowser.runtime.sendMessage({ action: 'resetAll' });
+  expect(first.style.filter).toBe('');
+  expect(second.style.filter).toBe('');
+  controller.cleanup();
+});
+
+it('merges each partial storage value over defaults', async () => {
+  fixture('/partial.png');
+  const controller = new ImageController();
+  await controller.init();
+  const container = controls()[0];
+  const hue = container.querySelector('[data-type="hue"]');
+  const invert = container.querySelector('[data-type="invert"]');
+
+  await browser.storage.local.set({
+    settings: { enableHue: false, enableCompact: true },
+  });
+  expect(hue?.classList.contains('dark-component-hidden')).toBe(true);
+  expect(container.classList.contains('compact')).toBe(true);
+
+  await browser.storage.local.set({
+    settings: { enableInvert: false },
+  });
+  expect(hue?.classList.contains('dark-component-hidden')).toBe(false);
+  expect(container.classList.contains('compact')).toBe(false);
+  expect(invert?.classList.contains('dark-component-hidden')).toBe(true);
+
+  await browser.storage.local.remove('settings');
+  expect(invert?.classList.contains('dark-component-hidden')).toBe(false);
+  controller.cleanup();
+});
+
+it('ignores unrelated storage and malformed commands without side effects', async () => {
+  const first = fixture('/noop-first.png').image;
+  const second = fixture('/noop-second.png').image;
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const controller = new ImageController();
+  await controller.init();
+
+  await browser.storage.sync.set({ settings: { enableCompact: true } });
+  await browser.storage.local.set({ unrelated: true });
+  await fakeBrowser.runtime.sendMessage(null);
+  await fakeBrowser.runtime.sendMessage('applyToAll');
+  await fakeBrowser.runtime.sendMessage({ action: 'unknown' });
+  await fakeBrowser.runtime.sendMessage({
+    action: 'applyToAll', invertValue: 1, hueValue: null,
+  });
+
+  const container = controls()[0];
+  expect(first.style.filter).toBe('');
+  expect(second.style.filter).toBe('');
+  expect(container.classList.contains('compact')).toBe(false);
+  expect(container.querySelector('[data-type="invert"]')
+    ?.classList.contains('dark-component-hidden')).toBe(false);
+  expect(warning).not.toHaveBeenCalled();
+  controller.cleanup();
+});
+
+it('removes both global listener references on cleanup', async () => {
+  fixture('/listeners.png');
+  const controller = new ImageController();
+  await controller.init();
+  expect(browser.storage.onChanged.hasListeners()).toBe(true);
+  expect(browser.runtime.onMessage.hasListeners()).toBe(true);
+
+  controller.cleanup();
+
+  expect(browser.storage.onChanged.hasListeners()).toBe(false);
+  expect(browser.runtime.onMessage.hasListeners()).toBe(false);
+});
 });

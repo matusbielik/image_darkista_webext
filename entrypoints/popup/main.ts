@@ -1,173 +1,58 @@
-// popup.ts
-import { browser } from '#imports'
-
-// Define settings type
-interface Settings {
-  enableInvert: boolean;
-  enableHue: boolean;
-  enableAuto: boolean;
-  enableSimilar: boolean;
-  enableReset: boolean;
-  enableCompact: boolean;
-}
-
-// Add immediate console log to verify script is running
-console.log('Popup script starting...')
+import { browser } from '#imports';
+import type { ContentCommand } from '../../shared/messages';
+import { loadSettings, saveSettings, type Settings } from '../../shared/settings';
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('DOM Content Loaded')
-
-  // Get DOM elements and verify they exist
-  const invertSlider = document.getElementById('invert') as HTMLInputElement;
+  const invert = document.getElementById('invert') as HTMLInputElement;
   const invertValue = document.getElementById('invert-value') as HTMLSpanElement;
-  const hueSlider = document.getElementById('hue') as HTMLInputElement;
+  const hue = document.getElementById('hue') as HTMLInputElement;
   const hueValue = document.getElementById('hue-value') as HTMLSpanElement;
-  const applyAllBtn = document.getElementById('apply-all') as HTMLButtonElement;
-  const resetAllBtn = document.getElementById('reset-all') as HTMLButtonElement;
-
-  // Get settings checkboxes
-  const enableInvert = document.getElementById('enable-invert') as HTMLInputElement;
-  const enableHue = document.getElementById('enable-hue') as HTMLInputElement;
-  const enableAuto = document.getElementById('enable-auto') as HTMLInputElement;
-  const enableSimilar = document.getElementById('enable-similar') as HTMLInputElement;
-  const enableReset = document.getElementById('enable-reset') as HTMLInputElement;
-  const enableCompact = document.getElementById('enable-compact') as HTMLInputElement;
-
-  // // Get containers
-  // const invertContainer = document.getElementById('invert-container');
-  // const hueContainer = document.getElementById('hue-container');
-
-  console.log('Found elements:', {
-    enableInvert: !!enableInvert,
-    enableHue: !!enableHue,
-    enableAuto: !!enableAuto,
-    enableSimilar: !!enableSimilar,
-    enableReset: !!enableReset,
-    enableCompact: !!enableCompact
-  })
-
-  if (!enableInvert || !enableHue || !enableAuto || !enableSimilar || !enableReset || !enableCompact) {
-    console.error('Some elements not found!')
-    return
-  }
-
-  // Type assert after null check
-  const inputs = {
-    enableInvert: enableInvert as HTMLInputElement,
-    enableHue: enableHue as HTMLInputElement,
-    enableAuto: enableAuto as HTMLInputElement,
-    enableSimilar: enableSimilar as HTMLInputElement,
-    enableReset: enableReset as HTMLInputElement,
-    enableCompact: enableCompact as HTMLInputElement
-  }
-
-  // Add immediate event listeners to verify they work
-  Object.entries(inputs).forEach(([name, input]) => {
-    input.addEventListener('click', () => {
-      console.log(`${name} clicked, new value:`, input.checked)
-    })
-  })
-
-  // Load saved settings
-  const loadSettings = async (): Promise<Settings> => {
-    const defaultSettings: Settings = {
-      enableInvert: true,
-      enableHue: true,
-      enableAuto: true,
-      enableSimilar: true,
-      enableReset: true,
-      enableCompact: false
-    }
-
-    try {
-      const result = await browser.storage.local.get('settings')
-      console.log('Loaded settings:', result)
-      return result.settings as Settings || defaultSettings
-    } catch (error) {
-      console.error('Error loading settings:', error)
-      return defaultSettings
-    }
+  const apply = document.getElementById('apply-all') as HTMLButtonElement;
+  const reset = document.getElementById('reset-all') as HTMLButtonElement;
+  const inputs: Record<keyof Settings, HTMLInputElement> = {
+    enableInvert: document.getElementById('enable-invert') as HTMLInputElement,
+    enableHue: document.getElementById('enable-hue') as HTMLInputElement,
+    enableAuto: document.getElementById('enable-auto') as HTMLInputElement,
+    enableSimilar: document.getElementById('enable-similar') as HTMLInputElement,
+    enableReset: document.getElementById('enable-reset') as HTMLInputElement,
+    enableCompact: document.getElementById('enable-compact') as HTMLInputElement,
   };
 
-  // Save settings and notify content script
-  const saveSettings = async (settings: Settings) => {
-    console.log('Saving settings:', settings)
-    try {
-      await browser.storage.local.set({ settings })
-
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true })
-      const activeTab = tabs[0]
-
-      if (activeTab?.id) {
-        await browser.tabs.sendMessage(activeTab.id, {
-          action: 'updateSettings',
-          settings
-        })
-        console.log('Settings saved and sent to tab:', activeTab.id)
-      } else {
-        console.error('No active tab found')
-      }
-    } catch (error) {
-      console.error('Error saving settings:', error)
+  try {
+    const settings = await loadSettings();
+    for (const key of Object.keys(inputs) as (keyof Settings)[]) {
+      inputs[key].checked = settings[key];
     }
-  };
+  } catch (error) { console.error('Failed to load settings:', error); }
 
-  // Initialize settings
-  const settings = await loadSettings();
-  console.log('Initializing with settings:', settings)
-  inputs.enableInvert.checked = settings.enableInvert
-  inputs.enableHue.checked = settings.enableHue
-  inputs.enableAuto.checked = settings.enableAuto
-  inputs.enableSimilar.checked = settings.enableSimilar
-  inputs.enableReset.checked = settings.enableReset
-  enableCompact.checked = settings.enableCompact
-
-  // Update settings when checkboxes change
-  const updateSettings = async () => {
-    const newSettings: Settings = {
-      enableInvert: enableInvert.checked,
-      enableHue: enableHue.checked,
-      enableAuto: enableAuto.checked,
-      enableSimilar: enableSimilar.checked,
-      enableReset: enableReset.checked,
-      enableCompact: enableCompact.checked
-    };
-    console.log('Saving new settings:', newSettings); // Debug log
-    await saveSettings(newSettings);
-  }
-
-  // Add change listeners to checkboxes
-  Object.values(inputs).forEach(input => {
-    input.addEventListener('change', updateSettings)
-    console.log('Added change listener to:', input.id)
-  })
-
-  // Update value displays
-  invertSlider.addEventListener('input', () => {
-    invertValue.textContent = invertSlider.value;
-  });
-
-  hueSlider.addEventListener('input', () => {
-    hueValue.textContent = hueSlider.value;
-  });
-
-  // Apply to all images
-  applyAllBtn.addEventListener('click', async () => {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tab.id) {
-      browser.tabs.sendMessage(tab.id, {
-        action: 'applyToAll',
-        invertValue: invertSlider.value,
-        hueValue: hueSlider.value
+  const persist = async (): Promise<void> => {
+    try {
+      await saveSettings({
+        enableInvert: inputs.enableInvert.checked,
+        enableHue: inputs.enableHue.checked,
+        enableAuto: inputs.enableAuto.checked,
+        enableSimilar: inputs.enableSimilar.checked,
+        enableReset: inputs.enableReset.checked,
+        enableCompact: inputs.enableCompact.checked,
       });
-    }
-  });
+    } catch (error) { console.error('Failed to save settings:', error); }
+  };
+  Object.values(inputs).forEach(input => input.addEventListener('change', persist));
+  invert.addEventListener('input', () => { invertValue.textContent = invert.value; });
+  hue.addEventListener('input', () => { hueValue.textContent = hue.value; });
 
-  // Reset all images
-  resetAllBtn.addEventListener('click', async () => {
+  const send = async (command: ContentCommand): Promise<void> => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tab.id) {
-      browser.tabs.sendMessage(tab.id, { action: 'resetAll' });
-    }
+    if (tab.id === undefined) throw new Error('No active tab');
+    await browser.tabs.sendMessage(tab.id, command);
+  };
+  apply.addEventListener('click', async () => {
+    try {
+      await send({ action: 'applyToAll', invertValue: invert.value, hueValue: hue.value });
+    } catch (error) { console.error('Failed to apply filters to all images:', error); }
+  });
+  reset.addEventListener('click', async () => {
+    try { await send({ action: 'resetAll' }); }
+    catch (error) { console.error('Failed to reset all images:', error); }
   });
 });

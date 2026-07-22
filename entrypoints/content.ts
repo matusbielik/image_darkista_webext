@@ -1,6 +1,13 @@
 import { defineContentScript, browser } from '#imports';
 import './content-styles.css'; // Assuming this CSS file exists and is correct
 
+import {
+  SETTINGS_STORAGE_KEY,
+  loadSettings,
+  mergeSettings,
+  type Settings,
+} from '../shared/settings';
+
 // --- Constants for Configuration & Magic Numbers ---
 const MIN_IMAGE_DIMENSION = 20;
 const DARK_BACKGROUND_THRESHOLD = 0.4;
@@ -17,15 +24,6 @@ const HUE_STEP_VALUE = '10';
 const AUTO_INVERT_HUE_VALUE = '180'; // Default hue for auto-inversion
 
 // --- Interfaces ---
-interface Settings {
-  enableInvert: boolean;
-  enableHue: boolean;
-  enableAuto: boolean;
-  enableSimilar: boolean;
-  enableReset: boolean;
-  enableCompact: boolean;
-}
-
 interface AutoAdjustResult {
   invertValue: number;
   skipEffects: boolean;
@@ -57,16 +55,6 @@ const HAS_CONTROLS_ATTR = 'data-has-dark-controls';
 const VISIBLE_CLASS = 'visible'; // Controls visibility
 const COMPACT_CLASS = 'compact';
 const HIDDEN_CLASS = 'dark-component-hidden'; // Component visibility within controls
-
-// Default settings
-const DEFAULT_SETTINGS: Settings = {
-  enableInvert: true,
-  enableHue: true,
-  enableAuto: true,
-  enableSimilar: true,
-  enableReset: true,
-  enableCompact: false,
-};
 
 // --- Image Analyzer (Brightness, Background Color) ---
 // (Keeping the analyzer utility class as it's mostly self-contained)
@@ -191,7 +179,7 @@ class ImageAnalyzer {
 
 // --- Main Controller ---
 class ImageController {
-  private settings: Settings = { ...DEFAULT_SETTINGS };
+  private settings = mergeSettings();
   private mutationObserver: MutationObserver;
   // Map: Image element -> its controls container and observer
   private imageElementMap = new Map<HTMLImageElement, ControlledImageElements>();
@@ -204,31 +192,29 @@ class ImageController {
     // this.resizeObserver = new ResizeObserver(this.handleResizes.bind(this));
   }
 
+  private readonly handleStorageChanged = (
+    changes: Record<string, { newValue?: unknown }>,
+    areaName: string,
+  ): void => {
+    const change = changes[SETTINGS_STORAGE_KEY];
+    if (areaName !== 'local' || !change) return;
+    this.settings = mergeSettings(
+      change.newValue as Partial<Settings> | undefined,
+    );
+    this.applySettingsToAllControls();
+  };
+
   async initialize(): Promise<void> {
-    await this.loadSettings();
-    this.processImages(document.body); // Initial scan
+    this.settings = await loadSettings();
+    this.processImages(document.body);
     this.mutationObserver.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['src', 'style', 'class', 'width', 'height'] // Observe size changes too
+      attributeFilter: ['src', 'style', 'class', 'width', 'height'],
     });
+    browser.storage.onChanged.addListener(this.handleStorageChanged);
     this.setupMessageListener();
-    // Optional: Start observing resizes
-    // document.querySelectorAll('img').forEach(img => this.resizeObserver.observe(img));
-    console.log("ImageController initialized (Overlay Mode)");
-  }
-
-  private async loadSettings(): Promise<void> {
-    try {
-      const result = await browser.storage.local.get('settings');
-      if (result.settings) {
-        this.settings = { ...DEFAULT_SETTINGS, ...result.settings };
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-      this.settings = { ...DEFAULT_SETTINGS };
-    }
   }
 
   private setupMessageListener(): void {
@@ -247,7 +233,7 @@ class ImageController {
     switch (msg.action) {
       case 'updateSettings':
         if (JSON.stringify(this.settings) !== JSON.stringify(msg.settings)) {
-          this.settings = { ...DEFAULT_SETTINGS, ...msg.settings };
+          this.settings = mergeSettings(msg.settings);
           this.applySettingsToAllControls();
           console.log("Settings updated and UI refreshed.");
         } else {
@@ -781,18 +767,13 @@ class ImageController {
   }
 
   // --- Cleanup ---
-  public cleanup(): void {
-    console.log("Cleaning up ImageController (Overlay Mode)...");
+  cleanup(): void {
     this.mutationObserver.disconnect();
-    // Optional: Disconnect resize observer
-    // this.resizeObserver.disconnect();
-
+    browser.storage.onChanged.removeListener(this.handleStorageChanged);
     const images = Array.from(this.imageElementMap.keys());
-    images.forEach(img => this.removeControlsForImage(img)); // This now removes observer and controls div
-
+    images.forEach(image => this.removeControlsForImage(image));
     this.imageElementMap.clear();
-    this.controlIdToImageMap.clear(); // Clear this map too
-    console.log("ImageController cleanup complete.");
+    this.controlIdToImageMap.clear();
   }
 }
 

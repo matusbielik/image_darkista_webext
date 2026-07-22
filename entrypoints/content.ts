@@ -7,12 +7,13 @@ import {
   mergeSettings,
   type Settings,
 } from '../shared/settings';
+import {
+  areImagesSimilar,
+  calculateAutoAdjust,
+} from '../content/image-analyzer';
 
 // --- Constants for Configuration & Magic Numbers ---
 const MIN_IMAGE_DIMENSION = 20;
-const DARK_BACKGROUND_THRESHOLD = 0.4;
-const DARK_IMAGE_THRESHOLD = 0.3; // Threshold to consider image itself dark
-const DEFAULT_BRIGHTNESS_FALLBACK = 0.5;
 const CONTROLS_Z_INDEX = '2147483647';
 const INITIALIZATION_DELAY_MS = 250;
 const INVERT_DEFAULT_VALUE = '0';
@@ -24,11 +25,6 @@ const HUE_STEP_VALUE = '10';
 const AUTO_INVERT_HUE_VALUE = '180'; // Default hue for auto-inversion
 
 // --- Interfaces ---
-interface AutoAdjustResult {
-  invertValue: number;
-  skipEffects: boolean;
-}
-
 // Map stores the controls container associated with an image
 interface ControlledImageElements {
   controlsContainer: HTMLDivElement;
@@ -55,127 +51,6 @@ const HAS_CONTROLS_ATTR = 'data-has-dark-controls';
 const VISIBLE_CLASS = 'visible'; // Controls visibility
 const COMPACT_CLASS = 'compact';
 const HIDDEN_CLASS = 'dark-component-hidden'; // Component visibility within controls
-
-// --- Image Analyzer (Brightness, Background Color) ---
-// (Keeping the analyzer utility class as it's mostly self-contained)
-class ImageAnalyzer {
-  private static canvas: HTMLCanvasElement = document.createElement('canvas');
-  private static context: CanvasRenderingContext2D | null = ImageAnalyzer.canvas.getContext('2d', { willReadFrequently: true }); // Opt-in for performance
-
-  static async analyzeBrightness(img: HTMLImageElement): Promise<number | null> {
-    // Ensure the image is loaded before analyzing
-    if (!img.complete || img.naturalWidth === 0) {
-      await new Promise(resolve => { img.onload = img.onerror = resolve; });
-    }
-    if (!img.complete || img.naturalWidth === 0 || !this.context) {
-      console.warn("Image analysis skipped: Image not loaded or context unavailable.", img.src);
-      return null;
-    }
-
-    try {
-      // Use natural dimensions if available, otherwise client dimensions
-      const width = img.naturalWidth || img.width;
-      const height = img.naturalHeight || img.height;
-
-      // Avoid issues with zero-sized canvases
-      if (width === 0 || height === 0) return null;
-
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.context.drawImage(img, 0, 0, width, height);
-
-      const imageData = this.context.getImageData(0, 0, width, height);
-      const data = imageData.data;
-      let totalBrightness = 0;
-      const pixelCount = data.length / 4;
-      const sampleRate = Math.max(1, Math.floor(pixelCount / 1000)); // Sample ~1000 pixels
-
-      let sampledPixels = 0;
-      for (let i = 0; i < data.length; i += 4 * sampleRate) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        // Simple brightness calculation (Luma)
-        totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-        sampledPixels++;
-      }
-
-      return sampledPixels > 0 ? totalBrightness / sampledPixels : null;
-    } catch (e) {
-      // Log CORS errors specifically if possible
-      if (e instanceof DOMException && e.name === 'SecurityError') {
-        console.warn(`CORS issue analyzing image: ${img.src}`, e);
-      } else {
-        console.error(`Error analyzing image brightness: ${img.src}`, e);
-      }
-      return null;
-    }
-  }
-
-  static getBackgroundColor(element: Element | null): string {
-    while (element) {
-      const style = window.getComputedStyle(element);
-      const bgColor = style.backgroundColor;
-      // Check for transparent or unset background
-      if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-        return bgColor;
-      }
-      // Stop if we hit the body or html without finding a color
-      if (element.tagName === 'BODY' || element.tagName === 'HTML') {
-        break;
-      }
-      element = element.parentElement;
-    }
-    // Fallback to body background
-    return window.getComputedStyle(document.body).backgroundColor || 'rgb(255, 255, 255)'; // Default white
-  }
-
-  static async calculateAutoAdjust(img: HTMLImageElement): Promise<AutoAdjustResult> {
-    const bgColor = ImageAnalyzer.getBackgroundColor(img.parentElement);
-    const match = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
-
-    if (!match) {
-      console.warn("Could not parse background color for auto-adjust:", bgColor);
-      return { invertValue: 0, skipEffects: true };
-    }
-
-    const [r, g, b] = [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
-    const bgBrightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-    // --- Use Constants ---
-    // const darkBackgroundThreshold = 0.4; --> Use DARK_BACKGROUND_THRESHOLD
-    // const darkImageThreshold = 0.3; // Threshold to consider image itself dark --> Use DARK_IMAGE_THRESHOLD
-
-    // 1. Check background first
-    if (bgBrightness >= DARK_BACKGROUND_THRESHOLD) {
-      console.log(`Auto-adjust: Light background (${bgBrightness.toFixed(2)}), skipping effects.`);
-      return { invertValue: 0, skipEffects: true }; // Skip on light backgrounds
-    }
-
-    // 2. Background is dark, now attempt to check image brightness (may cause CORS warning)
-    console.log(`Auto-adjust: Dark background (${bgBrightness.toFixed(2)}), checking image brightness...`);
-    const imgBrightness = await ImageAnalyzer.analyzeBrightness(img); // Returns number | null
-
-    // --- MODIFIED Logic for null ---
-    // 3. Handle analysis failure (null result)
-    if (imgBrightness === null) {
-      console.log("Auto-adjust: Image brightness analysis failed (e.g., CORS). Defaulting to apply effects on dark background.");
-      // Default to inverting on dark backgrounds if image analysis fails
-      return { invertValue: 1, skipEffects: false };
-    }
-
-    // 4. Analysis succeeded, check if image is also dark
-    if (imgBrightness < DARK_IMAGE_THRESHOLD) {
-      console.log(`Auto-adjust: Dark background AND dark image (${imgBrightness.toFixed(2)}), skipping effects.`);
-      return { invertValue: 0, skipEffects: true }; // Skip dark-on-dark
-    } else {
-      // Background is dark, image is not dark
-      console.log(`Auto-adjust: Dark background, non-dark image (${imgBrightness.toFixed(2)}), applying inversion.`);
-      return { invertValue: 1, skipEffects: false }; // Invert light/medium image on dark background
-    }
-  }
-}
-
 
 // --- Main Controller ---
 class ImageController {
@@ -623,7 +498,7 @@ class ImageController {
   private async handleAutoClick(img: HTMLImageElement): Promise<void> {
     console.log("Auto-adjust clicked for:", img.src);
     try {
-      const result = await ImageAnalyzer.calculateAutoAdjust(img);
+      const result = await calculateAutoAdjust(img);
       console.log("Auto-adjust result:", result); // Log the result object
 
       if (result.skipEffects) {
@@ -660,7 +535,7 @@ class ImageController {
 
       if (isSimilar) {
         // >>> Check if the target image itself should have effects skipped <<<
-        const targetAdjustResult = await ImageAnalyzer.calculateAutoAdjust(targetImg);
+        const targetAdjustResult = await calculateAutoAdjust(targetImg);
 
         if (targetAdjustResult.skipEffects) {
           console.log(`Skipping application to ${targetImg.src}: Target analysis suggests skipping effects.`);
@@ -704,41 +579,11 @@ class ImageController {
   }
 
   // --- Heuristics (Unchanged logic) ---
-  private isSimilarImage(sourceImg: HTMLImageElement, targetImg: HTMLImageElement): boolean {
-    // --- Detailed Logging --- 
-    console.log(`--- isSimilarImage Check ---`);
-    console.log(`Source: ${sourceImg.src}`);
-    console.log(`Target: ${targetImg.src}`);
-
-    const isInContext = (img: HTMLImageElement, label: string): boolean => {
-      const result = !!img.closest('article, [role="article"], .post, .entry, .content, main, .prose'); // Added .prose common for markdown content
-      console.log(`  ${label} isInContext: ${result} (parent: ${img.parentElement?.tagName}.${img.parentElement?.className})`);
-      return result;
-    };
-    const isLikelyStandalone = (img: HTMLImageElement, label: string): boolean => {
-      const size = Math.max(img.width || img.clientWidth, img.height || img.clientHeight);
-      const inNav = !!img.closest('nav, header, footer, .sidebar, .aside, .menu');
-      const isAssetPath = /^\/(img|image|asset)s?\//i.test(new URL(img.src, location.href).pathname);
-      const result = size > MIN_IMAGE_DIMENSION && !inNav && !isAssetPath;
-      console.log(`  ${label} isLikelyStandalone: ${result} (size:${size}, inNav:${inNav}, isAssetPath:${isAssetPath})`);
-      return result;
-    };
-
-    // Basic check: both should be likely standalone images, and either both in specific content areas or both not.
-    const sourceStandalone = isLikelyStandalone(sourceImg, 'Source');
-    const targetStandalone = isLikelyStandalone(targetImg, 'Target');
-
-    if (!sourceStandalone || !targetStandalone) {
-      console.log(`--- isSimilarImage Result: false (Standalone check failed) ---`);
-      return false;
-    }
-
-    const sourceInContext = isInContext(sourceImg, 'Source');
-    const targetInContext = isInContext(targetImg, 'Target');
-
-    const result = sourceInContext === targetInContext;
-    console.log(`--- isSimilarImage Result: ${result} (Context check) ---`);
-    return result;
+  private isSimilarImage(
+    sourceImg: HTMLImageElement,
+    targetImg: HTMLImageElement,
+  ): boolean {
+    return areImagesSimilar(sourceImg, targetImg);
   }
 
   // --- NEW: Helper function moved into class ---

@@ -1,6 +1,6 @@
 import { browser } from '#imports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeBrowser } from 'wxt/testing';
+import { fakeBrowser } from 'wxt/testing/fake-browser';
 import {
   DEFAULT_SETTINGS, SETTINGS_STORAGE_KEY, loadSettings,
   mergeSettings, saveSettings, type Settings,

@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const send = async (command: ContentCommand): Promise<void> => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tab.id === undefined) throw new Error('No active tab');
+    if (tab?.id === undefined) throw new Error('No active tab');
     await browser.tabs.sendMessage(tab.id, command);
   };
   apply.addEventListener('click', async () => {

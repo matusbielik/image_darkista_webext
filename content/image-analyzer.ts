@@ -20,7 +20,7 @@ export async function analyzeBrightness(img: HTMLImageElement): Promise<number |
     const rate = Math.max(1, Math.floor((data.length / 4) / 1000));
     let total = 0; let count = 0;
     for (let i = 0; i < data.length; i += 4 * rate) {
-      total += (.299 * data[i] + .587 * data[i + 1] + .114 * data[i + 2]) / 255;
+      total += (.299 * data[i]! + .587 * data[i + 1]! + .114 * data[i + 2]!) / 255;
       count++;
     }
     return count ? total / count : null;
@@ -48,7 +48,7 @@ export function calculateAutoAdjustFromValues(
 ): AutoAdjustResult {
   const match = backgroundColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
   if (!match) return { invertValue: 0, skipEffects: true };
-  const brightness = (.299 * +match[1] + .587 * +match[2] + .114 * +match[3]) / 255;
+  const brightness = (.299 * +match[1]! + .587 * +match[2]! + .114 * +match[3]!) / 255;
   if (brightness >= DARK_BACKGROUND_THRESHOLD) return { invertValue: 0, skipEffects: true };
   if (imageBrightness === null) return { invertValue: 1, skipEffects: false };
   return imageBrightness < DARK_IMAGE_THRESHOLD

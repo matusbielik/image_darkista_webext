@@ -1,6 +1,6 @@
 import { browser } from '#imports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fakeBrowser } from 'wxt/testing';
+import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { ImageController } from './image-controller';
 
 class IO {
@@ -46,8 +46,8 @@ describe('ImageController', () => {
     const rediscovery = [{
       type: 'childList', addedNodes: [image], removedNodes: [],
     } as unknown as MutationRecord];
-    MO.all[0].emit(rediscovery);
-    MO.all[0].emit(rediscovery);
+    MO.all[0]!.emit(rediscovery);
+    MO.all[0]!.emit(rediscovery);
     expect(controls()).toHaveLength(1);
     expect(IO.all).toHaveLength(1);
     controller.cleanup();
@@ -57,7 +57,7 @@ it('isolates sliders and tears down removed image ownership', async () => {
   const second = fixture('/second.png').image;
   const controller = new ImageController();
   await controller.init();
-  const owned = controls()[0];
+  const owned = controls()[0]!;
   const abort = vi.spyOn(AbortController.prototype, 'abort');
   const invert = owned.querySelector<HTMLInputElement>(
     '[data-type="invert"] input',
@@ -74,19 +74,19 @@ it('isolates sliders and tears down removed image ownership', async () => {
   expect(owned.hasAttribute('data-image-id')).toBe(false);
 
   first.remove();
-  MO.all[0].emit([{
+  MO.all[0]!.emit([{
     type: 'childList', addedNodes: [], removedNodes: [first],
   } as unknown as MutationRecord]);
   owned.classList.remove('visible');
   first.dispatchEvent(new Event('mouseenter'));
 
   expect(abort).toHaveBeenCalledOnce();
-  expect(IO.all[0].disconnect).toHaveBeenCalledOnce();
+  expect(IO.all[0]!.disconnect).toHaveBeenCalledOnce();
   expect(owned.isConnected).toBe(false);
   expect(owned.classList.contains('visible')).toBe(false);
   expect(first.hasAttribute('data-has-dark-controls')).toBe(false);
   controller.cleanup();
-  expect(IO.all[0].disconnect).toHaveBeenCalledOnce();
+  expect(IO.all[0]!.disconnect).toHaveBeenCalledOnce();
 });
 
 it('cleans all owned images once and is repeat-safe', async () => {
@@ -95,7 +95,7 @@ it('cleans all owned images once and is repeat-safe', async () => {
   const abort = vi.spyOn(AbortController.prototype, 'abort');
   const controller = new ImageController();
   await controller.init();
-  const [firstObserver, secondObserver] = IO.all;
+  const [firstObserver, secondObserver] = IO.all as [IO, IO];
 
   controller.cleanup();
 
@@ -116,7 +116,7 @@ it('recreates controls once when a removed image is rediscovered', async () => {
   const { image } = fixture('/rediscovered.png');
   const controller = new ImageController();
   await controller.init();
-  const observer = MO.all[0];
+  const observer = MO.all[0]!;
 
   image.remove();
   observer.emit([{
@@ -158,7 +158,7 @@ it('merges each partial storage value over defaults', async () => {
   fixture('/partial.png');
   const controller = new ImageController();
   await controller.init();
-  const container = controls()[0];
+  const container = controls()[0]!;
   const hue = container.querySelector('[data-type="hue"]');
   const invert = container.querySelector('[data-type="invert"]');
 
@@ -196,7 +196,7 @@ it('ignores unrelated storage and malformed commands without side effects', asyn
     action: 'applyToAll', invertValue: 1, hueValue: null,
   });
 
-  const container = controls()[0];
+  const container = controls()[0]!;
   expect(first.style.filter).toBe('');
   expect(second.style.filter).toBe('');
   expect(container.classList.contains('compact')).toBe(false);
@@ -223,21 +223,21 @@ it('preserves mutation options, dynamic discovery, eligibility, and repeat safet
   const controller = new ImageController();
   await Promise.all([controller.init(), controller.init()]); await controller.init();
   expect(MO.all).toHaveLength(1);
-  expect(MO.all[0].observe).toHaveBeenCalledOnce();
-  expect(MO.all[0].observe).toHaveBeenCalledWith(document.body, {
+  expect(MO.all[0]!.observe).toHaveBeenCalledOnce();
+  expect(MO.all[0]!.observe).toHaveBeenCalledWith(document.body, {
     childList: true, subtree: true, attributes: true,
     attributeFilter: ['src', 'style', 'class', 'width', 'height'],
   });
   const section = document.createElement('section'); const dynamic = fixture('/dynamic.png');
   dynamic.image.remove(); section.append(dynamic.image); document.body.append(section);
-  MO.all[0].emit([{ type: 'childList', addedNodes: [section], removedNodes: [] } as unknown as MutationRecord]);
+  MO.all[0]!.emit([{ type: 'childList', addedNodes: [section], removedNodes: [] } as unknown as MutationRecord]);
   expect(controls()).toHaveLength(1);
   const frame = vi.fn((cb: FrameRequestCallback) => { cb(0); return 1; });
   vi.stubGlobal('requestAnimationFrame', frame);
-  MO.all[0].emit([{ type: 'attributes', target: dynamic.image, attributeName: 'width' } as unknown as MutationRecord]);
+  MO.all[0]!.emit([{ type: 'attributes', target: dynamic.image, attributeName: 'width' } as unknown as MutationRecord]);
   expect(frame).toHaveBeenCalled();
   dynamic.setSize(10, 10);
-  MO.all[0].emit([{ type: 'attributes', target: dynamic.image, attributeName: 'height' } as unknown as MutationRecord]);
+  MO.all[0]!.emit([{ type: 'attributes', target: dynamic.image, attributeName: 'height' } as unknown as MutationRecord]);
   expect(controls()).toHaveLength(0);
   controller.cleanup(); controller.cleanup();
   expect(browser.storage.onChanged.hasListeners()).toBe(false);
@@ -260,7 +260,7 @@ it('does not leave listeners if cleanup runs during init', async () => {
   await pending;
   expect(browser.storage.onChanged.hasListeners()).toBe(false);
   expect(browser.runtime.onMessage.hasListeners()).toBe(false);
-  expect(MO.all[0].observe).not.toHaveBeenCalled();
+  expect(MO.all[0]!.observe).not.toHaveBeenCalled();
   expect(controls()).toHaveLength(0);
 
   await controller.init();

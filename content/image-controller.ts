@@ -43,6 +43,7 @@ export class ImageController {
   >();
   private initialized = false;
   private initialization: Promise<void> | undefined;
+  private generation = 0;
 
   constructor() {
     this.mutationObserver = new MutationObserver(
@@ -53,18 +54,24 @@ export class ImageController {
   async init(): Promise<void> {
     if (this.initialized) return;
     if (this.initialization) return this.initialization;
-    this.initialization = this.initialize();
+    const pending = this.initialize();
+    this.initialization = pending;
     try {
-      await this.initialization;
+      await pending;
     } finally {
-      this.initialization = undefined;
+      if (this.initialization === pending) this.initialization = undefined;
     }
   }
 
   private async initialize(): Promise<void> {
+    const generation = this.generation;
     this.settings = await loadSettings();
-    if (this.initialized) return;
+    if (generation !== this.generation) return;
     this.processImages(document.body);
+    if (generation !== this.generation) {
+      this.teardown();
+      return;
+    }
     this.mutationObserver.observe(document.body, {
       childList: true,
       subtree: true,
@@ -73,6 +80,10 @@ export class ImageController {
     });
     browser.storage.onChanged.addListener(this.handleStorageChanged);
     browser.runtime.onMessage.addListener(this.handleRuntimeMessage);
+    if (generation !== this.generation) {
+      this.teardown();
+      return;
+    }
     this.initialized = true;
   }
 
@@ -486,7 +497,12 @@ export class ImageController {
   }
 
   cleanup(): void {
-    if (!this.initialized && this.controlledImages.size === 0) return;
+    this.generation += 1;
+    this.initialization = undefined;
+    this.teardown();
+  }
+
+  private teardown(): void {
     this.mutationObserver.disconnect();
     browser.storage.onChanged.removeListener(this.handleStorageChanged);
     browser.runtime.onMessage.removeListener(this.handleRuntimeMessage);

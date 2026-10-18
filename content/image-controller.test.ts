@@ -243,4 +243,29 @@ it('preserves mutation options, dynamic discovery, eligibility, and repeat safet
   expect(browser.storage.onChanged.hasListeners()).toBe(false);
   expect(browser.runtime.onMessage.hasListeners()).toBe(false);
 });
+
+it('does not leave listeners if cleanup runs during init', async () => {
+  fixture('/race.png');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const originalGet = browser.storage.local.get.bind(browser.storage.local);
+  vi.spyOn(browser.storage.local, 'get').mockImplementation(async (keys?: unknown) => {
+    await gate;
+    return originalGet(keys as never);
+  });
+  const controller = new ImageController();
+  const pending = controller.init();
+  controller.cleanup();
+  release();
+  await pending;
+  expect(browser.storage.onChanged.hasListeners()).toBe(false);
+  expect(browser.runtime.onMessage.hasListeners()).toBe(false);
+  expect(MO.all[0].observe).not.toHaveBeenCalled();
+  expect(controls()).toHaveLength(0);
+
+  await controller.init();
+  expect(browser.storage.onChanged.hasListeners()).toBe(true);
+  expect(controls()).toHaveLength(1);
+  controller.cleanup();
+});
 });

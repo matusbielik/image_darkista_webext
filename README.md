@@ -1,6 +1,6 @@
 # Image Darkista Web Extension
 
-Image Darkista adds per-image invert and hue controls for pages used with dark-mode extensions such as Dark Reader. It is a WXT Manifest V3 extension for Chrome and Firefox.
+Image Darkista adds per-image invert and hue controls for pages used with dark-mode extensions such as Dark Reader. It is a WXT extension: Manifest V3 for Chrome, Manifest V2 for Firefox (WXT's Firefox default; host permissions stay granted at install).
 
 ## Architecture
 
@@ -24,4 +24,4 @@ pnpm build
 pnpm build:firefox
 ```
 
-Chrome output is under `.output/chrome-mv3/`; Firefox output is under `.output/firefox-mv3/`.
+Chrome output is under `.output/chrome-mv3/`; Firefox output is under `.output/firefox-mv2/`.

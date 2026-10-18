@@ -1,29 +1,30 @@
 const MIN_IMAGE_DIMENSION = 20;
 const DARK_BACKGROUND_THRESHOLD = .4;
 const DARK_IMAGE_THRESHOLD = .3;
+const SAMPLE_SIZE = 32;
 interface AutoAdjustResult { invertValue: number; skipEffects: boolean }
 
 export async function analyzeBrightness(img: HTMLImageElement): Promise<number | null> {
+  // Not loaded (yet): report "unavailable" instead of waiting, which would
+  // clobber the page's own onload/onerror handlers and could hang forever.
   if (!img.complete || img.naturalWidth === 0) {
-    await new Promise<void>(resolve => { img.onload = img.onerror = () => resolve(); });
+    return null;
   }
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!img.complete || img.naturalWidth === 0 || !context) return null;
-  const width = img.naturalWidth || img.width;
-  const height = img.naturalHeight || img.height;
-  if (!width || !height) return null;
+  if (!context) {
+    return null;
+  }
   try {
-    canvas.width = width; canvas.height = height;
-    context.drawImage(img, 0, 0, width, height);
-    const data = context.getImageData(0, 0, width, height).data;
-    const rate = Math.max(1, Math.floor((data.length / 4) / 1000));
-    let total = 0; let count = 0;
-    for (let i = 0; i < data.length; i += 4 * rate) {
-      total += (.299 * data[i]! + .587 * data[i + 1]! + .114 * data[i + 2]!) / 255;
-      count++;
+    canvas.width = SAMPLE_SIZE;
+    canvas.height = SAMPLE_SIZE;
+    context.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    const data = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      total += (0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!) / 255;
     }
-    return count ? total / count : null;
+    return total / (SAMPLE_SIZE * SAMPLE_SIZE);
   } catch (error) {
     if (error instanceof DOMException && error.name === 'SecurityError') {
       console.warn(`CORS issue analyzing image: ${img.src}`, error);

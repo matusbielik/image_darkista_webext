@@ -154,6 +154,44 @@ it('applies and resets typed bulk values', async () => {
   controller.cleanup();
 });
 
+it('keeps the page inline filter when adjusting and resetting', async () => {
+  const { image } = fixture('/base-filter.png');
+  image.style.filter = 'grayscale(1)';
+  const controller = new ImageController();
+  await controller.init();
+  const invert = controls()[0]!.querySelector<HTMLInputElement>(
+    '[data-type="invert"] input',
+  );
+  const reset = controls()[0]!.querySelector<HTMLButtonElement>(
+    '[data-type="reset"]',
+  );
+  if (!invert || !reset) throw new Error('Expected controls');
+
+  invert.value = '1';
+  invert.dispatchEvent(new Event('input'));
+  expect(image.style.filter).toBe('grayscale(1) invert(1) hue-rotate(0deg)');
+
+  reset.click();
+  expect(image.style.filter).toBe('grayscale(1)');
+  controller.cleanup();
+});
+
+it('keeps the page inline filter through bulk apply and reset', async () => {
+  const { image } = fixture('/base-filter-bulk.png');
+  image.style.filter = 'grayscale(1)';
+  const controller = new ImageController();
+  await controller.init();
+
+  await fakeBrowser.runtime.sendMessage({
+    action: 'applyToAll', invertValue: '1', hueValue: '180',
+  });
+  expect(image.style.filter).toBe('grayscale(1) invert(1) hue-rotate(180deg)');
+
+  await fakeBrowser.runtime.sendMessage({ action: 'resetAll' });
+  expect(image.style.filter).toBe('grayscale(1)');
+  controller.cleanup();
+});
+
 it('merges each partial storage value over defaults', async () => {
   fixture('/partial.png');
   const controller = new ImageController();

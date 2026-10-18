@@ -32,6 +32,7 @@ interface ControlledImageElements {
   resetButton: HTMLButtonElement;
   intersectionObserver: IntersectionObserver;
   abortController: AbortController;
+  baseFilter: string;
 }
 
 export class ImageController {
@@ -228,6 +229,8 @@ export class ImageController {
       resetButton,
       intersectionObserver,
       abortController,
+      // ponytail: base filter captured once; page changes to inline filter after that are overwritten
+      baseFilter: image.style.filter,
     });
     image.setAttribute(HAS_CONTROLS_ATTR, 'true');
     document.body.append(controlsContainer);
@@ -407,10 +410,13 @@ export class ImageController {
   private applyImageFilter(img: HTMLImageElement, invert: string | number, hue: string | number): void {
     const iValue = parseFloat(String(invert));
     const hValue = parseFloat(String(hue));
+    const baseFilter = this.controlledImages.get(img)?.baseFilter ?? '';
     if (iValue === 0 && hValue === 0) {
-      img.style.filter = '';
+      img.style.filter = baseFilter;
     } else {
-      img.style.filter = `invert(${iValue}) hue-rotate(${hValue}deg)`;
+      img.style.filter = [baseFilter, `invert(${iValue}) hue-rotate(${hValue}deg)`]
+        .filter(Boolean)
+        .join(' ');
     }
   }
 

@@ -2,6 +2,17 @@
 
 Image Darkista adds per-image invert and hue controls for pages used with dark-mode extensions such as Dark Reader. It is a WXT extension: Manifest V3 for Chrome, Manifest V2 for Firefox (WXT's Firefox default; host permissions stay granted at install).
 
+## Features
+
+Hover an image to get a small controls panel:
+
+- **Invert** (0–1) and **Hue** (0–360°) sliders. `invert(1) hue-rotate(180deg)` darkens an image while keeping its colors.
+- **Auto**: inverts when the background is dark and the image is not. Cross-origin images can't be measured, so for them Auto decides from the background alone.
+- **Similar**: applies the current values to similar images on the page (same article/navigation context).
+- **Reset**: restores the image, including any filter the page itself had set.
+
+The popup toggles which controls are shown, switches compact mode, and applies or resets values for every image on the active tab.
+
 ## Architecture
 
 - `entrypoints/popup/main.ts` persists shared settings and sends active-tab bulk commands.
@@ -25,3 +36,5 @@ pnpm build:firefox
 ```
 
 Chrome output is under `.output/chrome-mv3/`; Firefox output is under `.output/firefox-mv2/`.
+
+To try it in a Chromium browser (Chrome, Brave), open `chrome://extensions`, enable Developer mode, and choose **Load unpacked** with `.output/chrome-mv3` (or `.output/chrome-mv3-dev` while `pnpm dev` runs).

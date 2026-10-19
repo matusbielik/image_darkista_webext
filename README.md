@@ -5,8 +5,8 @@ Image Darkista adds per-image invert and hue controls for pages used with dark-m
 ## Architecture
 
 - `entrypoints/popup/main.ts` persists shared settings and sends active-tab bulk commands.
-- `entrypoints/content.ts` owns WXT lifecycle for one `ImageController`.
-- `content/image-controller.ts` owns image DOM state, observers, listeners, rendering, and teardown.
+- `entrypoints/content.ts` mounts a shadow-root UI and starts one `ImageController` bound to the content-script `ctx.signal`.
+- `content/image-controller.ts` owns one shared controls panel that follows the hovered image; per-image values live in a `WeakMap`. No DOM observers; listeners are torn down by the abort signal.
 - `content/image-analyzer.ts` contains plain image-analysis decisions.
 - `shared/settings.ts` and `shared/messages.ts` define persisted and runtime contracts.
 

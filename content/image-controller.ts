@@ -18,74 +18,176 @@ const HUE_MAX_VALUE = '360';
 const HUE_STEP_VALUE = '10';
 const AUTO_INVERT_HUE_VALUE = '180';
 const CONTROLS_CLASS = 'dark-image-controls';
-const HAS_CONTROLS_ATTR = 'data-has-dark-controls';
 const VISIBLE_CLASS = 'visible';
 const COMPACT_CLASS = 'compact';
 const HIDDEN_CLASS = 'dark-component-hidden';
 
-interface ControlledImageElements {
-  controlsContainer: HTMLDivElement;
-  invertSlider: HTMLInputElement;
-  hueSlider: HTMLInputElement;
-  autoButton: HTMLButtonElement;
-  similarButton: HTMLButtonElement;
-  resetButton: HTMLButtonElement;
-  intersectionObserver: IntersectionObserver;
-  abortController: AbortController;
+interface ImageState {
+  invert: string;
+  hue: string;
   baseFilter: string;
 }
 
 export class ImageController {
   private settings = mergeSettings();
-  private readonly mutationObserver: MutationObserver;
-  private readonly controlledImages = new Map<
-    HTMLImageElement,
-    ControlledImageElements
-  >();
-  private initialized = false;
-  private initialization: Promise<void> | undefined;
-  private generation = 0;
+  private readonly panel: HTMLDivElement;
+  private readonly invertSlider: HTMLInputElement;
+  private readonly hueSlider: HTMLInputElement;
+  private readonly state = new WeakMap<HTMLImageElement, ImageState>();
+  private current: HTMLImageElement | null = null;
 
-  constructor() {
-    this.mutationObserver = new MutationObserver(
-      records => this.handleMutations(records),
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly signal: AbortSignal,
+  ) {
+    this.panel = document.createElement('div');
+    this.panel.className = CONTROLS_CLASS;
+    this.panel.style.zIndex = CONTROLS_Z_INDEX;
+    this.invertSlider = this.addSlider(
+      'invert', '🔆', INVERT_MAX_VALUE, INVERT_STEP_VALUE,
     );
+    this.hueSlider = this.addSlider(
+      'hue', '🎨', HUE_MAX_VALUE, HUE_STEP_VALUE,
+    );
+    const buttons = document.createElement('div');
+    buttons.className = 'dark-action-buttons-group';
+    this.addButton(buttons, 'auto', '🎯', 'Auto', () => this.handleAutoClick());
+    this.addButton(
+      buttons, 'similar', '✨', 'Similar', () => this.handleSimilarClick(),
+    );
+    this.addButton(buttons, 'reset', '↺', 'Reset', () => this.handleResetClick());
+    this.panel.append(buttons);
+    root.append(this.panel);
+
+    const options = { signal };
+    this.panel.addEventListener('click', e => e.stopPropagation(), options);
+    this.panel.addEventListener('mouseleave', e => {
+      if (e.relatedTarget !== this.current) this.hide();
+    }, options);
+    document.addEventListener('mouseover', this.handleMouseOver, {
+      signal,
+      passive: true,
+    });
+    document.addEventListener('mouseout', this.handleMouseOut, options);
+    // ponytail: scroll/resize hide the panel instead of tracking the image; reposition-on-scroll if users ask
+    window.addEventListener('scroll', () => this.hide(), {
+      signal,
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener('resize', () => this.hide(), options);
+    // ponytail: position: fixed is relative to html/body if the page (or Dark Reader filter mode) sets filter/transform on them, so the panel may be offset there
   }
 
   async init(): Promise<void> {
-    if (this.initialized) return;
-    if (this.initialization) return this.initialization;
-    const pending = this.initialize();
-    this.initialization = pending;
-    try {
-      await pending;
-    } finally {
-      if (this.initialization === pending) this.initialization = undefined;
-    }
-  }
-
-  private async initialize(): Promise<void> {
-    const generation = this.generation;
     this.settings = await loadSettings();
-    if (generation !== this.generation) return;
-    this.processImages(document.body);
-    if (generation !== this.generation) {
-      this.teardown();
-      return;
-    }
-    this.mutationObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['src', 'style', 'class', 'width', 'height'],
-    });
+    if (this.signal.aborted) return;
     browser.storage.onChanged.addListener(this.handleStorageChanged);
     browser.runtime.onMessage.addListener(this.handleRuntimeMessage);
-    if (generation !== this.generation) {
-      this.teardown();
-      return;
+    this.signal.addEventListener('abort', () => {
+      browser.storage.onChanged.removeListener(this.handleStorageChanged);
+      browser.runtime.onMessage.removeListener(this.handleRuntimeMessage);
+    }, { once: true });
+    this.applySettings();
+  }
+
+  private addSlider(
+    type: 'invert' | 'hue',
+    labelText: string,
+    max: string,
+    step: string,
+  ): HTMLInputElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'dark-slider-component';
+    wrapper.dataset.type = type;
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = max;
+    slider.step = step;
+    slider.value = '0';
+    slider.addEventListener('input', () => this.handleSliderInput(), {
+      signal: this.signal,
+    });
+    wrapper.append(label, slider);
+    this.panel.append(wrapper);
+    return slider;
+  }
+
+  private addButton(
+    parent: HTMLElement,
+    type: 'auto' | 'similar' | 'reset',
+    icon: string,
+    text: string,
+    onClick: () => void,
+  ): void {
+    const button = document.createElement('button');
+    button.className = 'dark-action-button';
+    button.dataset.type = type;
+    button.title = text;
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'button-icon';
+    iconSpan.textContent = icon;
+    const textSpan = document.createElement('span');
+    textSpan.className = 'button-text';
+    textSpan.textContent = ` ${text}`;
+    button.append(iconSpan, textSpan);
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      event.preventDefault();
+      onClick();
+    }, { signal: this.signal });
+    parent.append(button);
+  }
+
+  private readonly handleMouseOver = (event: MouseEvent): void => {
+    const target = event.target;
+    if (target instanceof HTMLImageElement && this.isEligible(target)) {
+      this.show(target);
     }
-    this.initialized = true;
+  };
+
+  private readonly handleMouseOut = (event: MouseEvent): void => {
+    if (event.target !== this.current) return;
+    if (this.isInsideOverlay(event.relatedTarget)) return;
+    this.hide();
+  };
+
+  // Outside the shadow root the panel's contents are retargeted to the host.
+  private isInsideOverlay(target: EventTarget | null): boolean {
+    if (!(target instanceof Node)) return false;
+    const rootNode = this.root.getRootNode();
+    const host = rootNode instanceof ShadowRoot ? rootNode.host : null;
+    return target === host || this.root.contains(target);
+  }
+
+  private isEligible(img: HTMLImageElement): boolean {
+    const rect = img.getBoundingClientRect();
+    return rect.width >= MIN_IMAGE_DIMENSION
+      && rect.height >= MIN_IMAGE_DIMENSION
+      && getComputedStyle(img).visibility !== 'hidden';
+  }
+
+  private show(img: HTMLImageElement): void {
+    this.current = img;
+    this.syncSliders(img);
+    this.panel.classList.add(VISIBLE_CLASS);
+    const rect = img.getBoundingClientRect();
+    this.panel.style.top = `${rect.top}px`;
+    this.panel.style.left = `${Math.max(0, rect.right - this.panel.offsetWidth)}px`;
+  }
+
+  private hide(): void {
+    this.current = null;
+    this.panel.classList.remove(VISIBLE_CLASS);
+  }
+
+  private syncSliders(img: HTMLImageElement): void {
+    const entry = this.state.get(img);
+    this.invertSlider.value = entry?.invert ?? INVERT_DEFAULT_VALUE;
+    this.hueSlider.value = entry?.hue ?? HUE_DEFAULT_VALUE;
   }
 
   private readonly handleStorageChanged = (
@@ -97,7 +199,7 @@ export class ImageController {
     this.settings = mergeSettings(
       change.newValue as Partial<Settings> | undefined,
     );
-    this.applySettingsToAllControls();
+    this.applySettings();
   };
 
   private readonly handleRuntimeMessage = (message: unknown): void => {
@@ -121,400 +223,99 @@ export class ImageController {
   private handleCommand(command: ContentCommand): void {
     switch (command.action) {
       case 'applyToAll':
-        this.applyToAllImages(command.invertValue, command.hueValue);
+        for (const img of document.images) {
+          if (this.isEligible(img)) {
+            this.setValues(img, command.invertValue, command.hueValue);
+          }
+        }
         break;
       case 'resetAll':
-        this.resetAllImages();
+        for (const img of document.images) {
+          if (this.state.has(img)) {
+            this.setValues(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+          }
+        }
         break;
     }
   }
 
-  private handleMutations(records: MutationRecord[]): void {
-    const positionUpdates = new Set<HTMLImageElement>();
-    for (const record of records) {
-      if (record.type === 'childList') {
-        record.addedNodes.forEach(node => {
-          if (node instanceof Element) this.processImages(node);
-        });
-        record.removedNodes.forEach(node => {
-          if (node instanceof Element) this.cleanupRemovedImages(node);
-        });
-      } else if (
-        record.type === 'attributes'
-        && record.target instanceof HTMLImageElement
-      ) {
-        const image = record.target;
-        if (this.controlledImages.has(image)) {
-          if (!this.isEligibleImage(image, true)) {
-            this.removeControlsForImage(image);
-          } else {
-            positionUpdates.add(image);
-          }
-        } else if (this.isEligibleImage(image)) {
-          this.addControlsToImage(image);
-        }
-      }
+  private applySettings(): void {
+    const s = this.settings;
+    this.panel.classList.toggle(COMPACT_CLASS, s.enableCompact);
+    const parts: [string, boolean][] = [
+      ['.dark-slider-component[data-type="invert"]', s.enableInvert],
+      ['.dark-slider-component[data-type="hue"]', s.enableHue],
+      ['.dark-action-button[data-type="auto"]', s.enableAuto],
+      ['.dark-action-button[data-type="similar"]', s.enableSimilar],
+      ['.dark-action-button[data-type="reset"]', s.enableReset],
+    ];
+    for (const [selector, enabled] of parts) {
+      this.panel.querySelector(selector)?.classList.toggle(HIDDEN_CLASS, !enabled);
     }
-    positionUpdates.forEach(image => this.updateControlsPosition(image));
   }
 
-  private processImages(root: Element): void {
-    const images = root.matches('img')
-      ? [root as HTMLImageElement]
-      : Array.from(root.querySelectorAll<HTMLImageElement>('img'));
-    images.forEach(image => {
-      if (!this.controlledImages.has(image) && this.isEligibleImage(image)) {
-        this.addControlsToImage(image);
-      }
-    });
-  }
-
-  private isEligibleImage(img: HTMLImageElement, checkingControlledImage = false): boolean {
-    if (!checkingControlledImage && img.hasAttribute(HAS_CONTROLS_ATTR)) {
-      return false;
+  // Writes the filter for img and mirrors the values into the sliders if the panel shows img.
+  private setValues(img: HTMLImageElement, invert: string, hue: string): void {
+    let entry = this.state.get(img);
+    if (!entry) {
+      // ponytail: base filter captured once on first touch; later page changes to inline filter are overwritten
+      entry = { invert, hue, baseFilter: img.style.filter };
+      this.state.set(img, entry);
     }
-    const style = window.getComputedStyle(img);
-    if (!img.offsetParent || style.display === 'none' || style.visibility === 'hidden') {
-      return false;
-    }
-    if (img.clientWidth < MIN_IMAGE_DIMENSION || img.clientHeight < MIN_IMAGE_DIMENSION) {
-      return false;
-    }
-    return true;
-  }
-
-  private cleanupRemovedImages(root: Element): void {
-    const images = root.matches('img')
-      ? [root as HTMLImageElement]
-      : Array.from(root.querySelectorAll<HTMLImageElement>('img'));
-    images.forEach(image => this.removeControlsForImage(image));
-  }
-
-  private addControlsToImage(image: HTMLImageElement): void {
-    if (this.controlledImages.has(image) || !this.isEligibleImage(image)) return;
-    const abortController = new AbortController();
-    const signal = abortController.signal;
-    const controlsContainer = this.createControlsContainer(signal);
-    const invertSlider = this.addSlider(
-      controlsContainer, image, 'invert', '🔆', INVERT_DEFAULT_VALUE,
-      INVERT_MAX_VALUE, INVERT_STEP_VALUE, INVERT_DEFAULT_VALUE, signal,
-    );
-    const hueSlider = this.addSlider(
-      controlsContainer, image, 'hue', '🎨', HUE_DEFAULT_VALUE,
-      HUE_MAX_VALUE, HUE_STEP_VALUE, HUE_DEFAULT_VALUE, signal,
-    );
-    const buttons = document.createElement('div');
-    buttons.className = 'dark-action-buttons-group';
-    const autoButton = this.addButton(
-      buttons, 'auto', '🎯', 'Auto', () => this.handleAutoClick(image), signal,
-    );
-    const similarButton = this.addButton(
-      buttons, 'similar', '✨', 'Similar',
-      () => this.handleSimilarClick(image), signal,
-    );
-    const resetButton = this.addButton(
-      buttons, 'reset', '↺', 'Reset', () => this.handleResetClick(image), signal,
-    );
-    controlsContainer.append(buttons);
-    const intersectionObserver = new IntersectionObserver(
-      entries => this.handleIntersection(entries, image),
-      { threshold: 0 },
-    );
-    this.controlledImages.set(image, {
-      controlsContainer,
-      invertSlider,
-      hueSlider,
-      autoButton,
-      similarButton,
-      resetButton,
-      intersectionObserver,
-      abortController,
-      // ponytail: base filter captured once; page changes to inline filter after that are overwritten
-      baseFilter: image.style.filter,
-    });
-    image.setAttribute(HAS_CONTROLS_ATTR, 'true');
-    document.body.append(controlsContainer);
-    this.setupHoverEvents(image, controlsContainer, signal);
-    intersectionObserver.observe(image);
-    this.applySettingsToControls(image);
-    this.updateControlsPosition(image, controlsContainer);
-  }
-
-  private createControlsContainer(signal: AbortSignal): HTMLDivElement {
-    const container = document.createElement('div');
-    container.className = CONTROLS_CLASS;
-    container.style.zIndex = CONTROLS_Z_INDEX;
-    container.addEventListener(
-      'click',
-      event => event.stopPropagation(),
-      { signal },
-    );
-    return container;
-  }
-
-  private addSlider(
-    parent: HTMLElement,
-    image: HTMLImageElement,
-    type: 'invert' | 'hue',
-    labelText: string,
-    min: string,
-    max: string,
-    step: string,
-    value: string,
-    signal: AbortSignal,
-  ): HTMLInputElement {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'dark-slider-component';
-    wrapper.dataset.type = type;
-    const label = document.createElement('label');
-    label.textContent = labelText;
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = min;
-    slider.max = max;
-    slider.step = step;
-    slider.value = value;
-    slider.addEventListener(
-      'input',
-      () => this.handleSliderInput(image),
-      { signal },
-    );
-    wrapper.append(label, slider);
-    parent.append(wrapper);
-    return slider;
-  }
-
-  private addButton(
-    parent: HTMLElement,
-    type: 'auto' | 'similar' | 'reset',
-    icon: string,
-    text: string,
-    onClick: () => void,
-    signal: AbortSignal,
-  ): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.className = 'dark-action-button';
-    button.dataset.type = type;
-    button.title = text;
-    const iconSpan = document.createElement('span');
-    iconSpan.className = 'button-icon';
-    iconSpan.textContent = icon;
-    const textSpan = document.createElement('span');
-    textSpan.className = 'button-text';
-    textSpan.textContent = ` ${text}`;
-    textSpan.style.marginLeft = '4px';
-    button.append(iconSpan, textSpan);
-    button.addEventListener('click', event => {
-      event.stopPropagation();
-      event.preventDefault();
-      onClick();
-    }, { signal });
-    parent.append(button);
-    return button;
-  }
-
-  private setupHoverEvents(
-    image: HTMLImageElement,
-    controls: HTMLElement,
-    signal: AbortSignal,
-  ): void {
-    const show = () => {
-      this.updateControlsPosition(image, controls);
-      controls.classList.add(VISIBLE_CLASS);
-    };
-    const hide = () => controls.classList.remove(VISIBLE_CLASS);
-    image.addEventListener('mouseenter', show, { signal });
-    image.addEventListener('mouseleave', hide, { signal });
-    controls.addEventListener('mouseenter', show, { signal });
-    controls.addEventListener('mouseleave', hide, { signal });
-  }
-
-  private removeControlsForImage(image: HTMLImageElement): void {
-    const owned = this.controlledImages.get(image);
-    if (!owned) return;
-    owned.abortController.abort();
-    owned.intersectionObserver.disconnect();
-    owned.controlsContainer.remove();
-    image.removeAttribute(HAS_CONTROLS_ATTR);
-    this.controlledImages.delete(image);
-  }
-
-  private handleIntersection(entries: IntersectionObserverEntry[], img: HTMLImageElement): void {
-    const elements = this.controlledImages.get(img);
-    if (!elements) return;
-
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        this.updateControlsPosition(img, elements.controlsContainer);
-      } else {
-        elements.controlsContainer.classList.remove(VISIBLE_CLASS);
-      }
-    });
-  }
-
-  private updateControlsPosition(img: HTMLImageElement, controlsContainer?: HTMLElement): void {
-    if (!controlsContainer) {
-      const elements = this.controlledImages.get(img);
-      if (!elements) return;
-      controlsContainer = elements.controlsContainer;
-    }
-
-    if (!img.isConnected || !this.isEligibleImage(img, true)) {
-      this.removeControlsForImage(img);
-      return;
-    }
-
-    requestAnimationFrame(() => {
-      if (!controlsContainer || !controlsContainer.isConnected) return;
-
-      const rect = img.getBoundingClientRect();
-      const scrollTop = window.scrollY || document.documentElement.scrollTop;
-      const scrollLeft = window.scrollX || document.documentElement.scrollLeft;
-
-      controlsContainer.style.position = 'absolute';
-      controlsContainer.style.top = `${rect.top + scrollTop}px`;
-      controlsContainer.style.left = `${rect.left + scrollLeft + rect.width - controlsContainer.offsetWidth}px`;
-
-      controlsContainer.style.width = 'auto';
-      controlsContainer.style.height = 'auto';
-
-    });
-  }
-
-
-  private applySettingsToAllControls(): void {
-    this.controlledImages.forEach((elements, img) => {
-      this.applySettingsToControls(img);
-    });
-  }
-
-  private applySettingsToControls(img: HTMLImageElement): void {
-    const elements = this.controlledImages.get(img);
-    if (!elements?.controlsContainer) return;
-
-    const container = elements.controlsContainer;
-    container.classList.toggle(COMPACT_CLASS, this.settings.enableCompact);
-
-    container.querySelector('.dark-slider-component[data-type="invert"]')?.classList.toggle(HIDDEN_CLASS, !this.settings.enableInvert);
-    container.querySelector('.dark-slider-component[data-type="hue"]')?.classList.toggle(HIDDEN_CLASS, !this.settings.enableHue);
-    container.querySelector('.dark-action-button[data-type="auto"]')?.classList.toggle(HIDDEN_CLASS, !this.settings.enableAuto);
-    container.querySelector('.dark-action-button[data-type="similar"]')?.classList.toggle(HIDDEN_CLASS, !this.settings.enableSimilar);
-    container.querySelector('.dark-action-button[data-type="reset"]')?.classList.toggle(HIDDEN_CLASS, !this.settings.enableReset);
-
-    container.querySelectorAll('.button-text').forEach(span => {
-      (span as HTMLElement).style.display = this.settings.enableCompact ? 'none' : 'inline';
-    });
-    this.updateControlsPosition(img, container);
-  }
-
-  private applyImageFilter(img: HTMLImageElement, invert: string | number, hue: string | number): void {
-    const iValue = parseFloat(String(invert));
-    const hValue = parseFloat(String(hue));
-    const baseFilter = this.controlledImages.get(img)?.baseFilter ?? '';
+    entry.invert = invert;
+    entry.hue = hue;
+    const iValue = parseFloat(invert);
+    const hValue = parseFloat(hue);
     if (iValue === 0 && hValue === 0) {
-      img.style.filter = baseFilter;
+      img.style.filter = entry.baseFilter;
     } else {
-      img.style.filter = [baseFilter, `invert(${iValue}) hue-rotate(${hValue}deg)`]
+      img.style.filter = [entry.baseFilter, `invert(${iValue}) hue-rotate(${hValue}deg)`]
         .filter(Boolean)
         .join(' ');
     }
+    if (img === this.current) this.syncSliders(img);
   }
 
-  private updateSliderValues(img: HTMLImageElement, invert: string, hue: string): void {
-    const elements = this.controlledImages.get(img);
-    if (!elements) return;
-    if (elements.invertSlider) elements.invertSlider.value = invert;
-    if (elements.hueSlider) elements.hueSlider.value = hue;
+  private handleSliderInput(): void {
+    if (!this.current) return;
+    this.setValues(this.current, this.invertSlider.value, this.hueSlider.value);
   }
 
-
-  private handleSliderInput(image: HTMLImageElement): void {
-    const owned = this.controlledImages.get(image);
-    if (!owned) return;
-    this.applyImageFilter(
-      image,
-      owned.invertSlider.value,
-      owned.hueSlider.value,
-    );
-  }
-
-  private async handleAutoClick(image: HTMLImageElement): Promise<void> {
+  private async handleAutoClick(): Promise<void> {
+    const img = this.current;
+    if (!img) return;
     try {
-      const result = await calculateAutoAdjust(image);
+      const result = await calculateAutoAdjust(img);
       if (result.skipEffects) {
-        this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-        this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
+        this.setValues(img, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
       } else {
-        const invertValue = result.invertValue.toFixed(1);
-        this.updateSliderValues(image, invertValue, AUTO_INVERT_HUE_VALUE);
-        this.applyImageFilter(image, invertValue, AUTO_INVERT_HUE_VALUE);
+        this.setValues(img, result.invertValue.toFixed(1), AUTO_INVERT_HUE_VALUE);
       }
     } catch (error) {
       console.error('Failed to auto-adjust image:', error);
     }
   }
 
-  private async handleSimilarClick(
-    sourceImage: HTMLImageElement,
-  ): Promise<void> {
-    const source = this.controlledImages.get(sourceImage);
+  private async handleSimilarClick(): Promise<void> {
+    const source = this.current;
     if (!source) return;
-    const invertValue = source.invertSlider.value;
-    const hueValue = source.hueSlider.value;
-    for (const targetImage of this.controlledImages.keys()) {
+    const invert = this.invertSlider.value;
+    const hue = this.hueSlider.value;
+    for (const target of document.images) {
       if (
-        targetImage === sourceImage
-        || !this.isSimilarImage(sourceImage, targetImage)
+        target === source
+        || !this.isEligible(target)
+        || !areImagesSimilar(source, target)
       ) {
         continue;
       }
-      const result = await calculateAutoAdjust(targetImage);
-      if (!result.skipEffects) {
-        this.updateSliderValues(targetImage, invertValue, hueValue);
-        this.applyImageFilter(targetImage, invertValue, hueValue);
-      }
+      const result = await calculateAutoAdjust(target);
+      if (!result.skipEffects) this.setValues(target, invert, hue);
     }
   }
 
-  private handleResetClick(image: HTMLImageElement): void {
-    this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-    this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-  }
-
-  private applyToAllImages(invertValue: string, hueValue: string): void {
-    for (const image of this.controlledImages.keys()) {
-      this.updateSliderValues(image, invertValue, hueValue);
-      this.applyImageFilter(image, invertValue, hueValue);
-    }
-  }
-
-  private resetAllImages(): void {
-    for (const image of this.controlledImages.keys()) {
-      this.updateSliderValues(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-      this.applyImageFilter(image, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
-    }
-  }
-
-  private isSimilarImage(
-    sourceImage: HTMLImageElement,
-    targetImage: HTMLImageElement,
-  ): boolean {
-    return areImagesSimilar(sourceImage, targetImage);
-  }
-
-  cleanup(): void {
-    this.generation += 1;
-    this.initialization = undefined;
-    this.teardown();
-  }
-
-  private teardown(): void {
-    this.mutationObserver.disconnect();
-    browser.storage.onChanged.removeListener(this.handleStorageChanged);
-    browser.runtime.onMessage.removeListener(this.handleRuntimeMessage);
-    for (const image of this.controlledImages.keys()) {
-      this.removeControlsForImage(image);
-    }
-    this.initialized = false;
+  private handleResetClick(): void {
+    if (!this.current) return;
+    this.setValues(this.current, INVERT_DEFAULT_VALUE, HUE_DEFAULT_VALUE);
   }
 }

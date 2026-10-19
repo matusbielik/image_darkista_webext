@@ -1,5 +1,5 @@
 .dark-image-controls {
-    position: absolute;
+    position: fixed;
     display: none;
     flex-direction: column;
     gap: 4px;
@@ -12,16 +12,9 @@
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
     transition: opacity 0.2s ease-in-out;
     z-index: 2147483647;
+    font-family: system-ui, sans-serif;
 }
 .dark-image-controls.visible { display: flex; }
-.dark-controls-main-container,
-.dark-controls-sliders-container,
-.dark-controls-buttons-container {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.dark-controls-buttons-container { margin-top: 4px; }
 .dark-slider-component,
 .dark-action-button {
     display: flex;

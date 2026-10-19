@@ -39,7 +39,9 @@ Content-side modules:
   - Bulk actions and Similar iterate `document.images` at click time.
   - No MutationObserver or IntersectionObserver. All listeners are registered with the abort signal; there is no `cleanup()` method.
 - `content/image-analyzer.ts`: plain functions.
-  - `analyzeBrightness`: samples a 32×32 downscaled canvas. It returns `null` for images that aren't loaded yet and, silently, for cross-origin (tainted canvas) images.
+  - `analyzeBrightness`: samples a 32×32 downscaled canvas. It returns `null` for images that aren't loaded yet.
+    - If the canvas is tainted (a cross-origin image), it re-requests the image once with `crossOrigin = 'anonymous'`, with a 3s timeout.
+    - It returns silently with `null` when the server refuses CORS.
   - `calculateAutoAdjust`: dark background (< 0.4 luma) and an image that isn't dark (≥ 0.3) → invert. If brightness is unknown, it inverts on a dark background.
   - `areImagesSimilar`: the Similar heuristic, based on article/nav context and asset paths.
 - `entrypoints/content-styles.css`: panel styles. They load only inside the shadow root.
@@ -65,9 +67,7 @@ Shared contracts:
 
 - **Dark Reader styles inside our shadow root.** Dark Reader injects its styles into the open shadow root; this only affects how the panel looks.
 - **Panel offset.** If a page or Dark Reader's *filter* mode sets `filter`/`transform` on `html`/`body`, `position: fixed` is relative to that element and the panel may be offset.
-- **Auto on cross-origin images.** Most CDN images are cross-origin, so Auto usually falls back to the background-only decision. Possible improvements:
-  - Re-request the image with `crossOrigin = 'anonymous'`.
-  - A background-script fetch, which needs a `host_permissions` addition.
+- **Auto on cross-origin images.** The CORS retry only works when the server sends `Access-Control-Allow-Origin`. Otherwise Auto falls back to the background-only decision. A background-script fetch, which needs a `host_permissions` addition, would cover the rest.
 - **Hover-only.** No controls on touch devices or on images covered by transparent overlays.
 
 ## Conventions

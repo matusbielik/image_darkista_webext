@@ -2,6 +2,7 @@ const MIN_IMAGE_DIMENSION = 20;
 const DARK_BACKGROUND_THRESHOLD = .4;
 const DARK_IMAGE_THRESHOLD = .3;
 const SAMPLE_SIZE = 32;
+const CORS_LOAD_TIMEOUT_MS = 3000;
 interface AutoAdjustResult { invertValue: number; skipEffects: boolean }
 
 export async function analyzeBrightness(img: HTMLImageElement): Promise<number | null> {
@@ -10,28 +11,57 @@ export async function analyzeBrightness(img: HTMLImageElement): Promise<number |
   if (!img.complete || img.naturalWidth === 0) {
     return null;
   }
+  try {
+    return sampleBrightness(img);
+  } catch (error) {
+    if (!isTaintedCanvasError(error)) {
+      console.error(`Error analyzing image brightness: ${img.src}`, error);
+      return null;
+    }
+  }
+  // Cross-origin images taint the canvas (expected on most sites). Retry with a
+  // CORS request; it succeeds when the server sends Access-Control-Allow-Origin.
+  const copy = await loadCorsCopy(img.currentSrc || img.src);
+  if (!copy) {
+    return null;
+  }
+  try {
+    return sampleBrightness(copy);
+  } catch {
+    return null;
+  }
+}
+
+// Throws a SecurityError DOMException if the image taints the canvas.
+function sampleBrightness(img: HTMLImageElement): number | null {
   const canvas = document.createElement('canvas');
+  canvas.width = SAMPLE_SIZE;
+  canvas.height = SAMPLE_SIZE;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) {
     return null;
   }
-  try {
-    canvas.width = SAMPLE_SIZE;
-    canvas.height = SAMPLE_SIZE;
-    context.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const data = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
-    let total = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      total += (0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!) / 255;
-    }
-    return total / (SAMPLE_SIZE * SAMPLE_SIZE);
-  } catch (error) {
-    // Cross-origin images taint the canvas; expected on most sites, so fall back silently.
-    if (!(error instanceof DOMException && error.name === 'SecurityError')) {
-      console.error(`Error analyzing image brightness: ${img.src}`, error);
-    }
-    return null;
+  context.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+  const data = context.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    total += (0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!) / 255;
   }
+  return total / (SAMPLE_SIZE * SAMPLE_SIZE);
+}
+
+function isTaintedCanvasError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'SecurityError';
+}
+
+// Resolves null when the server refuses CORS, the load fails, or it takes too long.
+async function loadCorsCopy(src: string): Promise<HTMLImageElement | null> {
+  const copy = new Image();
+  copy.crossOrigin = 'anonymous';
+  copy.src = src;
+  const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), CORS_LOAD_TIMEOUT_MS));
+  const loaded = copy.decode().then(() => copy, () => null);
+  return Promise.race([loaded, timeout]);
 }
 
 export function getBackgroundColor(start: Element | null): string {

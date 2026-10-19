@@ -51,9 +51,59 @@ describe('image analyzer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: () => { throw new DOMException('blocked', 'SecurityError'); },
     } as unknown as CanvasRenderingContext2D);
+    // The CORS retry is refused by the server.
+    vi.spyOn(HTMLImageElement.prototype, 'decode').mockRejectedValue(new Error('CORS refused'));
     await expect(analyzeBrightness(image('/cors.png'))).resolves.toBeNull();
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
+  });
+
+  describe('CORS retry for tainted canvases', () => {
+    // Behaves like a real canvas: reading pixels of a cross-origin image throws
+    // unless that image was loaded with crossOrigin="anonymous".
+    function mockCanvas(): HTMLImageElement[] {
+      const drawn: HTMLImageElement[] = [];
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+        drawImage: (source: HTMLImageElement) => {
+          drawn.push(source);
+        },
+        getImageData: () => {
+          if (drawn.at(-1)?.crossOrigin !== 'anonymous') {
+            throw new DOMException('tainted', 'SecurityError');
+          }
+          return { data: new Uint8ClampedArray(SAMPLE_SIZE * SAMPLE_SIZE * 4).fill(255) };
+        },
+      } as unknown as CanvasRenderingContext2D);
+      return drawn;
+    }
+
+    it('measures a CORS-loaded copy when the original taints the canvas', async () => {
+      const drawn = mockCanvas();
+      vi.spyOn(HTMLImageElement.prototype, 'decode').mockResolvedValue(undefined);
+      const original = image('https://cdn.example.com/photo.jpg');
+
+      await expect(analyzeBrightness(original)).resolves.toBeCloseTo(1, 5);
+
+      expect(drawn).toHaveLength(2);
+      const copy = drawn[1]!;
+      expect(copy).not.toBe(original);
+      expect(copy.crossOrigin).toBe('anonymous');
+      expect(copy.src).toBe('https://cdn.example.com/photo.jpg');
+      expect(original.crossOrigin).toBeNull();
+    });
+
+    it('gives up when the CORS copy never loads', async () => {
+      vi.useFakeTimers();
+      try {
+        mockCanvas();
+        vi.spyOn(HTMLImageElement.prototype, 'decode').mockReturnValue(new Promise(() => {}));
+        const result = analyzeBrightness(image('https://slow.example.com/photo.jpg'));
+        await vi.advanceTimersByTimeAsync(3000);
+        await expect(result).resolves.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('returns null for unloaded images without touching page handlers', async () => {

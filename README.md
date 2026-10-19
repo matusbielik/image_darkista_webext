@@ -7,7 +7,7 @@ Image Darkista adds per-image invert and hue controls for pages used with dark-m
 Hover an image to get a small controls panel:
 
 - **Invert** (0–1) and **Hue** (0–360°) sliders. `invert(1) hue-rotate(180deg)` darkens an image while keeping its colors.
-- **Auto**: inverts when the background is dark and the image is not. Cross-origin images can't be measured, so for them Auto decides from the background alone.
+- **Auto**: inverts when the background is dark and the image is not. Cross-origin images are re-requested with CORS; if the server refuses, Auto decides from the background alone.
 - **Similar**: applies the current values to similar images on the page (same article/navigation context).
 - **Reset**: restores the image, including any filter the page itself had set.
 

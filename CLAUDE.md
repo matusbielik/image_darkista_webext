@@ -34,6 +34,7 @@ Content-side modules:
 - `content/image-controller.ts`: **one shared controls panel** per page. It follows the hovered image:
   - Document-level `mouseover`/`mouseout` decide which image is current.
   - Eligibility is checked at hover time: rendered size ≥ 20px and not `visibility: hidden`.
+  - The panel is also skipped when it would cover more than a third of the image (`MAX_PANEL_COVERAGE`), so thumbnails stay clickable. It's measured live, so compact mode allows smaller images.
   - The panel is `position: fixed`, placed from `getBoundingClientRect()`, and hides on scroll/resize.
   - Per-image values (`invert`, `hue`, `baseFilter`) live in a `WeakMap`. `setValues()` is the single place that writes `img.style.filter`; it composes on top of the page's own inline filter, captured on first touch.
   - Bulk actions and Similar iterate `document.images` at click time.

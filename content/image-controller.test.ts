@@ -139,6 +139,42 @@ describe('ImageController', () => {
     expect(panel.style.left).toBe('0px');
   });
 
+  it('does not cover images too small for the panel, such as gallery thumbnails', async () => {
+    const { image: big } = createImage('/big.png', {
+      left: 0, top: 0, width: 400, height: 300,
+    });
+    const { image: thumbnail } = createImage('/thumb.png', {
+      left: 0, top: 400, width: 120, height: 90,
+    });
+    const { image: square } = createImage('/square.png', {
+      left: 0, top: 600, width: 200, height: 200,
+    });
+    const { image: small } = createImage('/small.png', {
+      left: 0, top: 900, width: 150, height: 150,
+    });
+    await start();
+    // Full panel ~100x130; compact panel ~100x66 (happy-dom has no layout).
+    let size = { width: 100, height: 130 };
+    Object.defineProperty(panel, 'offsetWidth', { get: () => size.width });
+    Object.defineProperty(panel, 'offsetHeight', { get: () => size.height });
+
+    hover(big);
+    expect(isVisible()).toBe(true);
+
+    hover(thumbnail);
+    expect(isVisible()).toBe(false);
+
+    hover(square);
+    expect(isVisible()).toBe(true);
+
+    hover(small);
+    expect(isVisible()).toBe(false);
+
+    size = { width: 100, height: 66 };
+    hover(small);
+    expect(isVisible()).toBe(true);
+  });
+
   it('does not show the panel for a hidden image', async () => {
     const { image } = createImage('/hidden.png');
     image.style.visibility = 'hidden';

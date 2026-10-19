@@ -9,6 +9,9 @@ import {
 } from '../shared/settings';
 
 const MIN_IMAGE_DIMENSION = 20;
+// The panel may cover at most this share of the image; smaller images (thumbnails)
+// get no panel, so it never swallows their clicks.
+const MAX_PANEL_COVERAGE = 1 / 3;
 const CONTROLS_Z_INDEX = '2147483647';
 const INVERT_DEFAULT_VALUE = '0';
 const INVERT_MAX_VALUE = '1';
@@ -171,10 +174,17 @@ export class ImageController {
   }
 
   private show(img: HTMLImageElement): void {
+    const rect = img.getBoundingClientRect();
+    this.panel.classList.add(VISIBLE_CLASS);
+    // Measured after un-hiding, so compact mode's smaller panel allows smaller images.
+    // ponytail: fixed coverage ratio; per-site override if some galleries need it
+    const panelArea = this.panel.offsetWidth * this.panel.offsetHeight;
+    if (panelArea > MAX_PANEL_COVERAGE * rect.width * rect.height) {
+      this.hide();
+      return;
+    }
     this.current = img;
     this.syncSliders(img);
-    this.panel.classList.add(VISIBLE_CLASS);
-    const rect = img.getBoundingClientRect();
     this.panel.style.top = `${rect.top}px`;
     this.panel.style.left = `${Math.max(0, rect.right - this.panel.offsetWidth)}px`;
   }

@@ -46,11 +46,14 @@ describe('image analyzer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     await expect(analyzeBrightness(image('/unreadable.png'))).resolves.toBeNull();
     vi.restoreAllMocks();
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: () => { throw new DOMException('blocked', 'SecurityError'); },
     } as unknown as CanvasRenderingContext2D);
     await expect(analyzeBrightness(image('/cors.png'))).resolves.toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('returns null for unloaded images without touching page handlers', async () => {

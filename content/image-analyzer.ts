@@ -26,9 +26,10 @@ export async function analyzeBrightness(img: HTMLImageElement): Promise<number |
     }
     return total / (SAMPLE_SIZE * SAMPLE_SIZE);
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'SecurityError') {
-      console.warn(`CORS issue analyzing image: ${img.src}`, error);
-    } else { console.error(`Error analyzing image brightness: ${img.src}`, error); }
+    // Cross-origin images taint the canvas; expected on most sites, so fall back silently.
+    if (!(error instanceof DOMException && error.name === 'SecurityError')) {
+      console.error(`Error analyzing image brightness: ${img.src}`, error);
+    }
     return null;
   }
 }
